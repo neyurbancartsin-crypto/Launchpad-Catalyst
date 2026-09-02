@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { getSessionUserId } from "@/lib/project";
 import { logoutAction } from "@/actions/auth.actions";
 import { Sidebar } from "@/components/nav/sidebar";
 import { Button } from "@/components/ui";
@@ -12,6 +13,8 @@ export default async function DashboardLayout({
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
+  // Also confirms the account still exists behind the JWT.
+  await getSessionUserId();
 
   return (
     <div className="min-h-screen">

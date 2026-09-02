@@ -42,19 +42,31 @@ silently falling back to demo data.
 npm install
 ```
 
-Copy `.env.example` to `.env` and fill in `DATABASE_URL` and `AUTH_SECRET`
-(generate one with `npx auth secret`).
+Copy `.env.example` to `.env` and fill in `AUTH_SECRET` (generate one with
+`npx auth secret`) and both database URLs.
 
-For local development without a hosted database, start a local Postgres:
+### Database
+
+The datasource needs **two** Supabase connection strings, from
+*Project Settings → Database → Connection string → ORMs (Prisma)*:
+
+| Variable | Port | Used by |
+| --- | --- | --- |
+| `DATABASE_URL` | `6543` | The app. Pooled; keep `?pgbouncer=true` |
+| `DIRECT_URL` | `5432` | Migrations. DDL and advisory locks need a real session |
+
+If the password contains `@ # $ % / : ? &` it must be URL-encoded, or the
+connection string will not parse. `scripts/set-db-password.mjs` prompts for the
+password with echo off and handles the encoding:
 
 ```bash
-npx prisma dev --name catalyst
+node scripts/set-db-password.mjs
 ```
 
 Then apply the schema and seed a demo account:
 
 ```bash
-npm run db:migrate
+npx prisma migrate deploy   # forward-only; use `npm run db:migrate` in local dev
 npm run db:seed
 ```
 
@@ -156,8 +168,8 @@ demo badges disappear on their own.
 ## Still open
 
 - **Deployment** — the app has only ever run locally. Nothing is deployed.
-- **Hosted database** — local `prisma dev` Postgres; move `DATABASE_URL` to
-  Neon/Supabase before deploying (drop `SHADOW_DATABASE_URL` when you do).
+  `AUTH_SECRET` is still a development placeholder and must be regenerated
+  before it goes anywhere real.
 - **Live-integration testing** — the Claude and Reddit code paths compile and
   are wired, but have never run against real credentials.
 - **Billing, teams/multi-seat** — not built; out of MVP scope.

@@ -3,11 +3,13 @@ generator client {
 }
 
 datasource db {
-  provider          = "postgresql"
-  url               = env("DATABASE_URL")
-  // Only needed for the local `prisma dev` server, which cannot create its own
-  // shadow database. Hosted Postgres (Neon/Supabase) can omit SHADOW_DATABASE_URL.
-  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  provider  = "postgresql"
+  // Pooled connection (Supabase transaction pooler, port 6543). Used by the
+  // running app, where many short-lived serverless connections are the norm.
+  url       = env("DATABASE_URL")
+  // Direct connection (port 5432). Migrations need a real session — DDL and
+  // advisory locks do not work over a transaction pooler.
+  directUrl = env("DIRECT_URL")
 }
 
 enum Platform {

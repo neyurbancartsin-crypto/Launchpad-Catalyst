@@ -1,12 +1,28 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 
-export async function getSessionUserId(): Promise<string> {
+/**
+ * The signed-in user's id, verified to still exist.
+ *
+ * Sessions are JWTs, so a cookie outlives the row it points at — after the
+ * account is deleted, or after the app is pointed at a different database.
+ * Without this check the session looks valid and the next write fails on a
+ * foreign key instead. Cached per request so the extra lookup runs once.
+ */
+export const getSessionUserId = cache(async (): Promise<string> => {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
-  return session.user.id;
-}
+
+  const exists = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { id: true },
+  });
+  if (!exists) redirect("/login?reason=session-expired");
+
+  return exists.id;
+});
 
 /** The founder's active SaaS project, or null before onboarding. */
 export async function getActiveProject() {
