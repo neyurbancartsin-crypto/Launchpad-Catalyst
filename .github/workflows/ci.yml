@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Build
+        run: npx next build
+        env:
+          # Build-time only: no database is reached during a Next.js build,
+          # but Prisma requires the variable to be present.
+          DATABASE_URL: postgresql://user:pass@localhost:5432/db
+          AUTH_SECRET: ci-placeholder-secret-not-used-at-runtime
+          AI_PROVIDER: mock

@@ -1,26 +1,61 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --surface-muted: #f2f4f7;
+  --foreground: #16181d;
+  --muted: #626875;
+  --border: #e2e5ea;
+
+  --brand: #2f5fe0;
+  --brand-foreground: #ffffff;
+  --brand-soft: #eaf0ff;
+
+  --success: #12784f;
+  --success-soft: #e6f5ee;
+  --warning: #9a5b00;
+  --warning-soft: #fdf1dc;
+  --danger: #b3261e;
+  --danger-soft: #fdeceb;
+  --demo: #8a5a00;
+  --demo-soft: #fdf3d9;
+  --demo-border: #f0d79a;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-demo: var(--demo);
+  --color-demo-soft: var(--demo-soft);
+  --color-demo-border: var(--demo-border);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard focus stays visible everywhere; pointer clicks stay clean. */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }

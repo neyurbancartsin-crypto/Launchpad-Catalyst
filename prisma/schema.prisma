@@ -1,0 +1,457 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  // Only needed for the local `prisma dev` server, which cannot create its own
+  // shadow database. Hosted Postgres (Neon/Supabase) can omit SHADOW_DATABASE_URL.
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+enum Platform {
+  REDDIT
+  X
+  LINKEDIN
+}
+
+enum ConnectionStatus {
+  DEMO
+  CONNECTED
+  ERROR
+}
+
+enum PromotionRisk {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum OpportunityStatus {
+  NEW
+  REVIEWED
+  RESPONDED
+  IGNORED
+}
+
+enum ResponseStatus {
+  DRAFT
+  EDITED
+  POSTED
+}
+
+enum EngagementStage {
+  OPPORTUNITY
+  ENGAGEMENT
+  PROFILE_VISIT
+  WEBSITE_VISIT
+  SIGNUP
+  ACTIVATION
+  PAID
+}
+
+enum ExperimentStatus {
+  PLANNED
+  RUNNING
+  COMPLETE
+}
+
+enum Bottleneck {
+  ACQUISITION
+  POSITIONING
+  CONVERSION
+  ACTIVATION
+  PRODUCT
+}
+
+enum PriorityBand {
+  HIGH
+  REVIEW
+  LOW
+  DEPRIORITISE
+}
+
+// ---------------------------------------------------------------------------
+// Auth (Auth.js v5 / @auth/prisma-adapter)
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  name         String?
+  email        String   @unique
+  passwordHash String
+  emailVerified DateTime?
+  image        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accounts     Account[]
+  sessions     Session[]
+  saasProjects SaaSProject[]
+  authTokens   AuthToken[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum TokenPurpose {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+}
+
+/// Single-use, expiring tokens for password reset and email verification.
+/// Only the SHA-256 hash is stored, so a database leak cannot be replayed.
+model AuthToken {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   TokenPurpose
+  tokenHash String       @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  @@index([userId, purpose])
+}
+
+// ---------------------------------------------------------------------------
+// Product domain
+// ---------------------------------------------------------------------------
+
+model SaaSProject {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Required onboarding fields (PRD s5)
+  name             String
+  website          String
+  description      String  @db.Text
+  problemSolved    String  @db.Text
+  targetCustomer   String  @db.Text
+  category         String
+  pricing          String
+  currentUsers     Int     @default(0)
+  payingUsers      Int     @default(0)
+  businessModel    String // "B2B" | "B2C" | "B2B2C"
+  targetGeography  String
+  competitors      String  @db.Text
+  currentChannels  String  @db.Text
+  biggestProblem   String  @db.Text
+
+  // Optional onboarding fields (PRD s5)
+  marketingBudget  String?
+  hoursPerWeek     Int?
+  existingAudience String?
+  socialProfiles   String?
+
+  onboardingComplete Boolean   @default(false)
+  aiAnalysisRaw      Json?
+  lastSyncedAt       DateTime?
+  /// Set when a platform could not be reached during the last discovery run.
+  lastSyncError      String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  icp            ICP?
+  channels       Channel[]
+  communities    Community[]
+  opportunities  Opportunity[]
+  engagements    Engagement[]
+  experiments    Experiment[]
+  reports        GrowthReport[]
+  pageAudits     LandingPageAudit[]
+
+  @@index([userId])
+}
+
+model ICP {
+  id            String      @id @default(cuid())
+  projectId     String      @unique
+  project       SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Product understanding (PRD s6)
+  productSummary   String @db.Text
+  coreProblem      String @db.Text
+  valueProposition String @db.Text
+  productCategory  String
+
+  // Primary / secondary customer
+  primaryCustomer   String @db.Text
+  secondaryCustomer String @db.Text
+
+  roles         String[]
+  industries    String[]
+  companySize   String
+  painPoints    String[]
+  buyingTriggers String[]
+  objections    String[]
+
+  // Problem map: [{ problem, relatedProblems[] }]
+  problemMap    Json
+  searchTopics  String[]
+  intentSignals String[]
+
+  editedByUser Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Channel {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  platform Platform
+  fitScore Int // 0-10 per PRD s7
+  priority String // "High" | "Medium" | "Low"
+
+  whyItFits           String @db.Text
+  whoToFind           String @db.Text
+  topicsToTarget      String @db.Text
+  conversationsToJoin String @db.Text
+  actionToTake        String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, platform])
+}
+
+model Community {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  platform       Platform
+  externalId     String // e.g. "SaaS" for r/SaaS
+  name           String
+  url            String
+  description    String?  @db.Text
+  memberCount    Int?
+  relevanceScore Int // 0-100
+  // How strict the community is about self-promotion; feeds promotion-risk scoring
+  selfPromoRules String   @default("moderate") // "strict" | "moderate" | "lenient"
+  isDemoData     Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+
+  opportunities Opportunity[]
+
+  @@unique([projectId, platform, externalId])
+  @@index([projectId])
+}
+
+model Opportunity {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  communityId String?
+  community   Community? @relation(fields: [communityId], references: [id], onDelete: SetNull)
+
+  platform       Platform
+  externalPostId String
+  sourceUrl      String
+  title          String  @db.Text
+  content        String  @db.Text
+  author         String
+  communityName  String
+
+  // Engagement metadata from the platform
+  upvotes      Int      @default(0)
+  commentCount Int      @default(0)
+  postedAt     DateTime
+
+  // Score components (PRD s15) - each 0-100
+  icpScore        Int
+  problemScore    Int
+  intentScore     Int
+  recencyScore    Int
+  relevanceScore  Int
+  engagementScore Int
+  opportunityScore Int // weighted overall, 0-100
+
+  priorityBand      PriorityBand
+  promotionRisk     PromotionRisk
+  promotionRiskReason String     @db.Text
+  recommendedAction String
+  actionRationale   String       @db.Text
+
+  status       OpportunityStatus @default(NEW)
+  isDemoData   Boolean           @default(true)
+  discoveredAt DateTime          @default(now())
+
+  conversation Conversation?
+  responses    Response[]
+  engagements  Engagement[]
+
+  @@unique([projectId, platform, externalPostId])
+  @@index([projectId, opportunityScore])
+  @@index([projectId, status])
+}
+
+model Conversation {
+  id            String      @id @default(cuid())
+  opportunityId String      @unique
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  parentContent String @db.Text
+  // Comment tree: [{ id, parentId, author, body, upvotes, depth, createdAt, isOp }]
+  comments      Json
+  // Conversation Analyzer output: [{ commentId, icpMatch, problemExpressed, intent, worthResponding, reason }]
+  analysis      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Response {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  style          String // helpful | conversational | short | detailed | technical | experience-based
+  draft          String @db.Text
+  finalText      String? @db.Text
+  mentionsProduct Boolean @default(false)
+  guidanceNote   String? @db.Text
+
+  status   ResponseStatus @default(DRAFT)
+  postedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([opportunityId])
+}
+
+model Engagement {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+
+  platform Platform
+  stage    EngagementStage
+  action   String? // e.g. "Comment", "Reply", "DM"
+  count    Int             @default(1)
+  notes    String?         @db.Text
+
+  loggedAt DateTime @default(now())
+
+  @@index([projectId, stage])
+  @@index([projectId, loggedAt])
+}
+
+model Experiment {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  name       String
+  hypothesis String   @db.Text
+  channel    Platform?
+  action     String   @db.Text
+  startDate  DateTime
+  endDate    DateTime
+  targetConversations Int @default(0)
+  status     ExperimentStatus @default(PLANNED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  result ExperimentResult?
+
+  @@index([projectId])
+}
+
+model ExperimentResult {
+  id           String     @id @default(cuid())
+  experimentId String     @unique
+  experiment   Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  conversations  Int @default(0)
+  websiteVisits  Int @default(0)
+  signups        Int @default(0)
+  activatedUsers Int @default(0)
+  paidUsers      Int @default(0)
+
+  // Growth Analyst output: { whatHappened, interpretation, nextExperiment }
+  aiAnalysis Json?
+  bottleneck Bottleneck?
+
+  recordedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model GrowthReport {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  // Full Growth Analyst payload: activity, results, best channel/topic/type, recommendation
+  payload    Json
+  bottleneck Bottleneck?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model LandingPageAudit {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  url String
+  // { scores: {icpClarity, problemClarity, ...}, biggestIssue, recommendation }
+  payload Json
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}
