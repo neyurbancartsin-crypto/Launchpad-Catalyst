@@ -1,5 +1,12 @@
+import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { authConfig } from "@/lib/auth.config";
+
+// A lightweight NextAuth instance built from the provider-free config only.
+// Importing the full `@/lib/auth` here would pull bcryptjs and the Prisma
+// client into the middleware bundle — unnecessary, since middleware only
+// reads the JWT session and never calls the Credentials provider.
+const { auth } = NextAuth(authConfig);
 
 const PUBLIC_PATHS = [
   "/",

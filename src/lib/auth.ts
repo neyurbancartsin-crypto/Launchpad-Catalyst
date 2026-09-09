@@ -3,17 +3,18 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { authConfig } from "@/lib/auth.config";
 
 export const credentialsSchema = z.object({
   email: z.string().email("Enter a valid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
+// Full config: route handlers and server actions run in the Node.js
+// runtime, so the Credentials provider's Prisma + bcrypt dependency here is
+// fine — only middleware needed to avoid it (see auth.config.ts).
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: "jwt" },
-  pages: {
-    signIn: "/login",
-  },
+  ...authConfig,
   providers: [
     Credentials({
       credentials: {
@@ -39,16 +40,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    jwt({ token, user }) {
-      if (user) token.sub = user.id;
-      return token;
-    },
-    session({ session, token }) {
-      if (token.sub) session.user.id = token.sub;
-      return session;
-    },
-  },
 });
 
 /** A valid bcrypt hash of a value no user password can equal, for timing parity. */
