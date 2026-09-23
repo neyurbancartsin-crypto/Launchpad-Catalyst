@@ -196,7 +196,7 @@ export default async function ReportsPage() {
         />
         <div className="grid gap-6 md:grid-cols-2">
           <LandingPageAuditForm
-            defaultUrl={project.website}
+            defaultUrl={project.website ?? ""}
             action={analyzeLandingPageAction}
           />
 

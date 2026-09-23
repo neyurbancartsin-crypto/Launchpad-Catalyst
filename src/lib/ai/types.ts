@@ -8,25 +8,17 @@ import type { Bottleneck, Platform, PromotionRisk } from "@prisma/client";
 
 // --- SaaS Analyzer (PRD s6) + Channel Strategist (PRD s7) ------------------
 
+/**
+ * The founder answers only these — two required, two optional. Everything
+ * that used to be asked directly (name, category, pricing, business model,
+ * geography, competitors, current channels, acquisition problem) is now
+ * inferred by the AI analysis instead; see SaaSAnalysis below.
+ */
 export interface SaaSIntake {
-  name: string;
-  website: string;
   description: string;
   problemSolved: string;
-  targetCustomer: string;
-  category: string;
-  pricing: string;
-  currentUsers: number;
-  payingUsers: number;
-  businessModel: string;
-  targetGeography: string;
-  competitors: string;
-  currentChannels: string;
-  biggestProblem: string;
-  marketingBudget?: string | null;
-  hoursPerWeek?: number | null;
-  existingAudience?: string | null;
-  socialProfiles?: string | null;
+  targetCustomer?: string | null;
+  website?: string | null;
 }
 
 export interface ProblemMapEntry {
@@ -34,11 +26,22 @@ export interface ProblemMapEntry {
   relatedProblems: string[];
 }
 
+export interface KeywordSynonymEntry {
+  keyword: string;
+  synonyms: string[];
+}
+
 export interface SaaSAnalysis {
+  /** Inferred when the founder didn't give one explicitly. */
+  productName: string;
   productSummary: string;
   coreProblem: string;
   valueProposition: string;
   productCategory: string;
+  /** "B2B" | "B2C" | "B2B2C" — inferred, not asked for directly. */
+  businessModel: string;
+  /** Inferred likely competitors/alternatives; may be empty. */
+  likelyCompetitors: string[];
 
   primaryCustomer: string;
   secondaryCustomer: string;
@@ -52,6 +55,23 @@ export interface SaaSAnalysis {
   problemMap: ProblemMapEntry[];
   searchTopics: string[];
   intentSignals: string[];
+
+  /**
+   * Search intelligence (additive to searchTopics/intentSignals above, not a
+   * replacement): specific problem-shaped phrases a real person would
+   * actually type, e.g. "unpaid invoice" rather than just "invoice" —
+   * consumed by `lib/search/build-query.ts`, not the raw platform adapters.
+   */
+  positiveKeywords: string[];
+  /** Variations/wording of a positive keyword, e.g. "unpaid invoice" -> ["overdue invoice", "outstanding invoice"]. */
+  keywordSynonyms: KeywordSynonymEntry[];
+  /** Phrases that should exclude a conversation even if it matches positively elsewhere. */
+  negativeKeywords: string[];
+}
+
+export interface SaaSAnalysisWithChannels {
+  analysis: SaaSAnalysis;
+  channels: ChannelRecommendation[];
 }
 
 export interface ChannelRecommendation {
@@ -240,11 +260,14 @@ export interface AIProvider {
   /** True when outputs are demo analysis rather than a live model. */
   readonly isDemoProvider: boolean;
 
-  analyzeSaaS(input: SaaSIntake): Promise<SaaSAnalysis>;
-  recommendChannels(
-    input: SaaSIntake,
-    analysis: SaaSAnalysis,
-  ): Promise<ChannelRecommendation[]>;
+  /**
+   * The SaaS Analyzer and Channel Strategist combined into a single call —
+   * channel fit doesn't need the analyzer's own structured output restated
+   * back into a second prompt, so one pass over the founder's (minimal)
+   * intake produces both the full product/ICP understanding and channel
+   * recommendations together.
+   */
+  analyzeSaaSWithChannels(input: SaaSIntake): Promise<SaaSAnalysisWithChannels>;
   analyzeConversation(
     input: ConversationAnalysisInput,
   ): Promise<CommentAnalysis[]>;

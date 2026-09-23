@@ -201,7 +201,7 @@ export async function setOpportunityStatusAction(formData: FormData): Promise<vo
   const status = String(formData.get("status") ?? "") as OpportunityStatus;
   if (!opportunityId) return;
 
-  const valid: OpportunityStatus[] = ["NEW", "REVIEWED", "RESPONDED", "IGNORED"];
+  const valid: OpportunityStatus[] = ["NEW", "REVIEWED", "RESPONDED", "IGNORED", "SAVED"];
   if (!valid.includes(status)) return;
 
   const { project } = await requireProjectWithIcp();

@@ -8,6 +8,24 @@ import type { Platform } from "@prisma/client";
 
 export type AdapterConnectionState = "DEMO" | "CONNECTED" | "ERROR";
 
+/**
+ * Thrown by an adapter when the underlying platform's API rate limit has
+ * been hit. Discovery treats this as recoverable: it stops issuing further
+ * requests to that platform for the rest of the current sync instead of
+ * letting the exception abort the whole run and discard work already done,
+ * and surfaces `retryAt` (when the platform reports one) so the reason is
+ * diagnosable rather than a generic failure.
+ */
+export class PlatformRateLimitError extends Error {
+  constructor(
+    message: string,
+    readonly retryAt: Date | null = null,
+  ) {
+    super(message);
+    this.name = "PlatformRateLimitError";
+  }
+}
+
 export interface ConnectionStatus {
   platform: Platform;
   status: AdapterConnectionState;
@@ -75,6 +93,16 @@ export interface DiscoveryQuery {
  */
 export interface PlatformAdapter {
   readonly platform: Platform;
+
+  /**
+   * Upper bound on how many discovered communities a sync should run
+   * `searchPosts` against, for adapters whose search endpoint has a rate
+   * limit too tight to query every discovered community (e.g. GitHub's
+   * Search API). When set, discovery searches only the most ICP-relevant
+   * communities up to this count. Adapters that leave it undefined have
+   * every discovered community searched, as before.
+   */
+  readonly maxCommunitiesPerSync?: number;
 
   getConnectionStatus(): Promise<ConnectionStatus>;
 

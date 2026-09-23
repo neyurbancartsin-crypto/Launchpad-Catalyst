@@ -15,14 +15,18 @@ export function DemoBadge({ label = "Demo Data" }: { label?: string }) {
 }
 
 export function DemoBanner({
+  title,
   children,
 }: {
+  /** Defaults to the "nothing is connected" headline; override when some,
+   * but not all, of what's shown is demo data (see the Opportunities page). */
+  title?: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="mb-6 rounded-xl border border-demo-border bg-demo-soft px-4 py-3">
       <p className="text-sm font-medium text-demo">
-        Demo mode — no live platform connections
+        {title ?? "Demo mode — no live platform connections"}
       </p>
       <p className="mt-0.5 text-sm text-demo/90">
         {children ??

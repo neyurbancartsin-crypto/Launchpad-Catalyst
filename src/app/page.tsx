@@ -4,10 +4,10 @@ import { auth } from "@/lib/auth";
 import { Button } from "@/components/ui";
 
 const LOOP = [
-  ["Find", "Relevant communities, posts and comments across Reddit, X and LinkedIn."],
-  ["Understand", "Who has your problem, how strong their intent is, and whether to promote."],
-  ["Act", "A recommended action and a value-first draft you post yourself."],
-  ["Track", "Log what happened: visits, signups, activated and paying users."],
+  ["Find", "Relevant conversations on GitHub, Hacker News and Stack Overflow, scored deterministically — no AI spent finding them."],
+  ["Understand", "Which conversations are a real opportunity, not just a related keyword match, and whether promoting here would be welcome."],
+  ["Decide", "You choose what's worth your time — save it, dismiss it, or look closer."],
+  ["Respond", "A value-first draft you review, edit and post yourself. Nothing is ever posted automatically."],
   ["Learn", "See which channel, topic and conversation type actually works."],
 ];
 
@@ -19,13 +19,13 @@ export default async function HomePage() {
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-16">
       <p className="text-sm font-medium text-brand">Launchpad Catalyst</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-        Find the right conversations. Take the right actions. Get your first
-        users.
+        Find conversations where your customers are already talking.
       </h1>
       <p className="mt-4 max-w-2xl text-base text-muted">
-        An acquisition system for early-stage SaaS founders: identify your ideal
-        customers, discover the conversations worth joining, understand which
-        opportunities are real, and learn what is actually working.
+        An acquisition system for early-stage SaaS founders: find the
+        conversations worth joining on GitHub, Hacker News and Stack
+        Overflow, understand which ones are real opportunities — not just
+        related keywords — and decide what to do next.
       </p>
 
       <div className="mt-8 flex flex-wrap gap-3">

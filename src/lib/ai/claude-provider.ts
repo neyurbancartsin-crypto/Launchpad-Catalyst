@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import type { Platform } from "@prisma/client";
+import { PLATFORM_LABELS, SUPPORTED_PLATFORMS } from "@/lib/adapters/registry";
 import {
   assessPromotionRisk,
   detectsSolutionRequest,
@@ -15,7 +17,6 @@ import {
 import { diagnoseBottleneck } from "./mock-provider";
 import type {
   AIProvider,
-  ChannelRecommendation,
   CommentAnalysis,
   ConversationAnalysisInput,
   ExperimentAnalysis,
@@ -28,7 +29,7 @@ import type {
   OpportunityScoringInput,
   ResponseDraft,
   ResponseGenerationInput,
-  SaaSAnalysis,
+  SaaSAnalysisWithChannels,
   SaaSIntake,
 } from "./types";
 
@@ -83,14 +84,27 @@ export class ClaudeAIProvider implements AIProvider {
     return response.parsed_output;
   }
 
-  // --- SaaS Analyzer (PRD s6) ---------------------------------------------
+  // --- SaaS Analyzer + Channel Strategist combined (PRD s6-s7) -------------
 
-  async analyzeSaaS(input: SaaSIntake): Promise<SaaSAnalysis> {
+  /**
+   * One call producing both the SaaS analysis and channel recommendations
+   * from the founder's minimal intake (description, problem solved, and
+   * optionally target customer / website) — everything else (name,
+   * category, business model, likely competitors, ICP) is inferred.
+   */
+  async analyzeSaaSWithChannels(
+    input: SaaSIntake,
+  ): Promise<SaaSAnalysisWithChannels> {
+    const platformNames = SUPPORTED_PLATFORMS.map((p) => PLATFORM_LABELS[p]).join(", ");
+
     const schema = z.object({
+      productName: z.string(),
       productSummary: z.string(),
       coreProblem: z.string(),
       valueProposition: z.string(),
       productCategory: z.string(),
+      businessModel: z.enum(["B2B", "B2C", "B2B2C"]),
+      likelyCompetitors: z.array(z.string()),
       primaryCustomer: z.string(),
       secondaryCustomer: z.string(),
       roles: z.array(z.string()),
@@ -107,46 +121,17 @@ export class ClaudeAIProvider implements AIProvider {
       ),
       searchTopics: z.array(z.string()),
       intentSignals: z.array(z.string()),
-    });
-
-    return this.parse({
-      schema,
-      effort: "high",
-      system:
-        "You advise early-stage SaaS founders on customer acquisition. Be concrete and specific — vague personas produce vague search results. " +
-        "searchTopics must be short phrases (2-4 words) that people would actually type or write when describing this problem in their own words, not marketing language. " +
-        "intentSignals must be short phrases that signal someone is looking for a solution, e.g. \"how do i\", \"looking for\", \"anyone using\", \"alternative to\". " +
-        "painPoints and problemMap entries should be written the way a customer would describe them, not the way a vendor would.",
-      prompt: [
-        `Product name: ${input.name}`,
-        `Website: ${input.website}`,
-        `What it does: ${input.description}`,
-        `Problem solved: ${input.problemSolved}`,
-        `Target customer: ${input.targetCustomer}`,
-        `Category: ${input.category}`,
-        `Pricing: ${input.pricing}`,
-        `Business model: ${input.businessModel}`,
-        `Geography: ${input.targetGeography}`,
-        `Competitors: ${input.competitors}`,
-        `Current channels: ${input.currentChannels}`,
-        `Current users: ${input.currentUsers} (${input.payingUsers} paying)`,
-        `Biggest acquisition problem: ${input.biggestProblem}`,
-        "",
-        "Produce the product understanding, ICP, problem map, search topics and intent signals for this product.",
-      ].join("\n"),
-    });
-  }
-
-  // --- Channel Strategist (PRD s7) -----------------------------------------
-
-  async recommendChannels(
-    input: SaaSIntake,
-    analysis: SaaSAnalysis,
-  ): Promise<ChannelRecommendation[]> {
-    const schema = z.object({
+      positiveKeywords: z.array(z.string()),
+      keywordSynonyms: z.array(
+        z.object({
+          keyword: z.string(),
+          synonyms: z.array(z.string()),
+        }),
+      ),
+      negativeKeywords: z.array(z.string()),
       channels: z.array(
         z.object({
-          platform: z.enum(["REDDIT", "X", "LINKEDIN"]),
+          platform: z.enum(SUPPORTED_PLATFORMS as [Platform, ...Platform[]]),
           fitScore: z.number().int().min(0).max(10),
           priority: z.enum(["High", "Medium", "Low"]),
           whyItFits: z.string(),
@@ -160,25 +145,34 @@ export class ClaudeAIProvider implements AIProvider {
 
     const result = await this.parse({
       schema,
-      effort: "medium",
+      effort: "high",
       system:
-        "You advise early-stage SaaS founders on which channels to spend their limited time on. " +
-        "Score honestly — if a channel is a poor fit for this business model or audience, say so with a low score. " +
-        "Return exactly one entry for each of REDDIT, X and LINKEDIN.",
+        "You advise early-stage SaaS founders on customer acquisition. The founder gave you only a short description and problem statement — infer everything else a competent analyst would: a plausible product name (from the website domain if given, otherwise a short descriptive name), its category, business model (B2B/B2C/B2B2C), and likely competitors or alternatives. " +
+        "Be concrete and specific — vague personas produce vague search results. " +
+        "searchTopics must be short phrases (2-4 words) that people would actually type or write when describing this problem in their own words, not marketing language. " +
+        "intentSignals must be short phrases that signal someone is looking for a solution, e.g. \"how do i\", \"looking for\", \"anyone using\", \"alternative to\". " +
+        "painPoints and problemMap entries should be written the way a customer would describe them, not the way a vendor would. " +
+        "If a target customer is given, use it as the primary customer; otherwise infer the most likely primary and secondary customer from the product description. " +
+        "positiveKeywords: 5-12 SPECIFIC problem-shaped phrases a real person would actually type or write, sharper than searchTopics — e.g. for an invoicing tool, prefer \"unpaid invoice\" or \"client hasn't paid\" over just \"invoice\". Every product is different: derive these from what this specific product actually solves, never a fixed template. " +
+        "keywordSynonyms: for the positiveKeywords that have genuinely common alternate wordings, list a few real variations people use — e.g. \"freelancer\" -> [\"independent consultant\", \"self-employed\", \"solo business\"]. Skip a keyword entirely if it has no natural variation; do not force synonyms nobody would actually use. " +
+        "negativeKeywords: a SHORT, conservative list of phrases that would make a conversation clearly irrelevant even if it contains a positive keyword — e.g. unrelated industries, job/hiring posts, or a different meaning of an ambiguous term. Only include terms you are confident are false-positive traps for this specific product; leave the array empty rather than guessing. " +
+        "You also advise which channels to spend limited time on. Score honestly — if a channel is a poor fit for this business model or audience, say so with a low score. " +
+        `Return exactly one channel entry for each of ${platformNames}.`,
       prompt: [
-        `Product: ${input.name} — ${analysis.productSummary}`,
-        `Business model: ${input.businessModel}`,
-        `Primary customer: ${analysis.primaryCustomer}`,
-        `Roles: ${analysis.roles.join(", ")}`,
-        `Search topics: ${analysis.searchTopics.join(", ")}`,
-        `Budget: ${input.marketingBudget ?? "none stated"}`,
-        `Hours available per week: ${input.hoursPerWeek ?? "not stated"}`,
+        `What it does: ${input.description}`,
+        `Problem solved: ${input.problemSolved}`,
+        `Target customer: ${input.targetCustomer ?? "not specified — infer it"}`,
+        `Website: ${input.website ?? "not provided"}`,
         "",
-        "Recommend how to use Reddit, X and LinkedIn for this product.",
+        `Produce the product understanding, ICP, problem map, search topics, intent signals and search keyword strategy (positive keywords, synonyms, negative keywords) for this product, and recommend how to use ${platformNames} for it.`,
       ].join("\n"),
     });
 
-    return result.channels.sort((a, b) => b.fitScore - a.fitScore);
+    const { channels, ...analysis } = result;
+    return {
+      analysis,
+      channels: [...channels].sort((a, b) => b.fitScore - a.fitScore),
+    };
   }
 
   // --- Conversation Analyzer (PRD s10) -------------------------------------
@@ -282,33 +276,13 @@ export class ClaudeAIProvider implements AIProvider {
       asksForSolution,
     });
 
-    // The model explains the verdict; it does not change it.
-    let actionRationale = action.rationale;
-    try {
-      const schema = z.object({ rationale: z.string() });
-      const explained = await this.parse({
-        schema,
-        effort: "low",
-        maxTokens: 1000,
-        system:
-          "You explain to a founder why a specific recommended action fits a specific conversation. " +
-          "Two sentences maximum. Reference something concrete from the post. Do not contradict the recommended action or suggest a different one.",
-        prompt: [
-          `Community: ${input.communityName} (self-promotion rules: ${input.selfPromoRules})`,
-          `Post: ${input.title}`,
-          input.content.slice(0, 1500),
-          "",
-          `Recommended action: ${action.action}`,
-          `Promotion risk: ${risk.risk}`,
-          `Opportunity score: ${opportunityScore}/100`,
-          "",
-          "Explain why this action fits this conversation.",
-        ].join("\n"),
-      });
-      actionRationale = explained.rationale;
-    } catch {
-      // A failed explanation must not lose the assessment; keep the rule text.
-    }
+    // The rationale is the deterministic rule text from
+    // determineRecommendedAction — the same text every provider (including
+    // MockAIProvider) would fall back to anyway if an AI explanation call
+    // failed. Since the verdict itself is never influenced by the model
+    // (only its wording was), spending a full API call just to reword one
+    // sentence isn't worth it; the rule-based rationale is used directly.
+    const actionRationale = action.rationale;
 
     return {
       ...components,

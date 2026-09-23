@@ -20,6 +20,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
     "@auth/prisma-adapter": "^2.11.3",
+    "@google/genai": "^2.22.0",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "next": "16.3.4",

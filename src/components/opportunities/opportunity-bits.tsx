@@ -9,6 +9,58 @@ export const BAND_LABELS: Record<PriorityBand, string> = {
   DEPRIORITISE: "Do not prioritise",
 };
 
+/**
+ * Relevant != opportunity: the same deterministic score already drives this
+ * distinction (PRD) — a HIGH/REVIEW band means real problem+intent match,
+ * while LOW/DEPRIORITISE means the topic may be related but the conversation
+ * itself isn't a good place to acquire a customer. No new field, purely a
+ * founder-facing label over the existing `priorityBand`.
+ */
+export const OPPORTUNITY_TIER: Record<
+  PriorityBand,
+  { label: string; hint: string }
+> = {
+  HIGH: {
+    label: "High Opportunity",
+    hint: "Strong problem match and real intent — a good place to help.",
+  },
+  REVIEW: {
+    label: "Opportunity",
+    hint: "Decent problem and intent match — worth a look.",
+  },
+  LOW: {
+    label: "Relevant",
+    hint: "Related to your product, but weak customer intent.",
+  },
+  DEPRIORITISE: {
+    label: "Low Relevance",
+    hint: "Weak fit or mostly superficial keyword overlap.",
+  },
+};
+
+/** Short, plain-language reason string, e.g. "Strong problem match · High intent · Low promotion risk". */
+export function explainOpportunity(o: {
+  problemScore: number;
+  intentScore: number;
+  promotionRisk: PromotionRisk;
+}): string {
+  const problem =
+    o.problemScore >= 60
+      ? "Strong problem match"
+      : o.problemScore >= 35
+        ? "Some problem overlap"
+        : "Weak problem match";
+  const intent =
+    o.intentScore >= 60 ? "High intent" : o.intentScore >= 35 ? "Some intent" : "Low intent";
+  const risk =
+    o.promotionRisk === "LOW"
+      ? "Low promotion risk"
+      : o.promotionRisk === "MEDIUM"
+        ? "Medium promotion risk"
+        : "High promotion risk";
+  return [problem, intent, risk].join(" · ");
+}
+
 export function ScoreBadge({
   score,
   band,
@@ -27,6 +79,23 @@ export function ScoreBadge({
   return (
     <Badge tone={tone} title={BAND_LABELS[band]}>
       {score}/100
+    </Badge>
+  );
+}
+
+export function TierBadge({ band }: { band: PriorityBand }) {
+  const tier = OPPORTUNITY_TIER[band];
+  const tone =
+    band === "HIGH"
+      ? "success"
+      : band === "REVIEW"
+        ? "brand"
+        : band === "LOW"
+          ? "neutral"
+          : "neutral";
+  return (
+    <Badge tone={tone} title={tier.hint}>
+      {tier.label}
     </Badge>
   );
 }

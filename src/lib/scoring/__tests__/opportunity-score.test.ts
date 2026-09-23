@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampScore,
+  computeComponents,
   computeOverallScore,
   engagementScore,
   keywordMatchScore,
@@ -160,6 +161,95 @@ describe("engagementScore", () => {
 
   it("treats negative input as zero", () => {
     expect(engagementScore(-5, -5)).toBe(0);
+  });
+});
+
+describe("computeComponents - relevant != opportunity", () => {
+  const icpKeywords = ["small support team", "customer support"];
+  const problemKeywords = ["overdue invoice", "chasing payment", "invoice tracking"];
+  const intentSignals = ["how do you", "what tool"];
+  const base = {
+    icpKeywords,
+    problemKeywords,
+    intentSignals,
+    productCategory: "invoicing",
+    communityTopics: ["invoicing", "freelance"],
+    upvotes: 5,
+    commentCount: 3,
+    postedAt: new Date("2026-01-30T00:00:00Z"),
+    now: new Date("2026-01-31T00:00:00Z"),
+  };
+
+  it("scores a genuine problem/question post highly on problem and intent", () => {
+    const genuine = computeComponents({
+      ...base,
+      text:
+        "I've sent an invoice to my client three weeks ago and still haven't been paid. " +
+        "How do you guys track overdue invoices?",
+    });
+
+    expect(genuine.problemScore).toBeGreaterThan(0);
+    expect(genuine.intentScore).toBeGreaterThanOrEqual(65);
+  });
+
+  it("dampens problem/ICP/intent for a promotional pitch even with strong keyword overlap", () => {
+    const promo = computeComponents({
+      ...base,
+      text:
+        "Introducing our new invoice tracking tool! Check out our product to chase overdue payments automatically.",
+    });
+    const genuine = computeComponents({
+      ...base,
+      text:
+        "I've sent an invoice to my client three weeks ago and still haven't been paid. " +
+        "How do you guys track overdue invoices?",
+    });
+
+    expect(promo.problemScore).toBeLessThan(genuine.problemScore);
+    expect(computeOverallScore(promo)).toBeLessThan(computeOverallScore(genuine));
+  });
+
+  it("dampens a generic listicle ('Best free invoice generator') that has no genuine ask attached", () => {
+    const listicle = computeComponents({
+      ...base,
+      text: "Best free invoice generator for small teams chasing overdue payments",
+    });
+    const genuine = computeComponents({
+      ...base,
+      text:
+        "I've sent an invoice to my client three weeks ago and still haven't been paid. " +
+        "How do you guys track overdue invoices?",
+    });
+
+    // This is the exact PRD example: same "invoice" keyword overlap, but the
+    // listicle must not out-score (or come close to) the genuine question.
+    expect(computeOverallScore(listicle)).toBeLessThan(computeOverallScore(genuine));
+  });
+
+  it("does not dampen a listicle-style phrase when a genuine personal question is attached", () => {
+    const withAsk = computeComponents({
+      ...base,
+      text:
+        "What's the best free invoice tracking tool? I'm struggling with overdue payments from three clients.",
+    });
+    expect(withAsk.problemScore).toBeGreaterThan(0);
+  });
+
+  it("leaves topic relevance untouched by promotional suppression", () => {
+    const promo = computeComponents({
+      ...base,
+      text: "Introducing our new invoice tracking tool! Check out our product.",
+    });
+    // relevanceScore is driven by productCategory/communityTopics overlap,
+    // not by problem/intent phrasing — it should not be suppressed just
+    // because the post itself is promotional.
+    expect(promo.relevanceScore).toBe(
+      keywordMatchScore(
+        "Introducing our new invoice tracking tool! Check out our product.",
+        ["invoicing", "invoicing", "freelance"],
+        2,
+      ),
+    );
   });
 });
 

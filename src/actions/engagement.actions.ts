@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Platform } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireProject } from "@/lib/project";
 import { FUNNEL_STAGES } from "@/lib/funnel";
@@ -12,7 +13,9 @@ export interface EngagementFormState {
 }
 
 const logSchema = z.object({
-  platform: z.enum(["REDDIT", "X", "LINKEDIN"]),
+  // The full enum, not just the active discovery platforms — a founder can
+  // still log engagement against a deferred platform from earlier activity.
+  platform: z.nativeEnum(Platform),
   stage: z.enum(FUNNEL_STAGES as [string, ...string[]]),
   opportunityId: z.string().optional(),
   action: z.string().trim().max(120).optional(),

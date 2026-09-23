@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getActiveProject } from "@/lib/project";
 import { getStageCounts } from "@/lib/funnel";
-import { PLATFORM_LABELS } from "@/lib/adapters/registry";
+import { getLivePlatforms, PLATFORM_LABELS } from "@/lib/adapters/registry";
+import { Prisma } from "@prisma/client";
 import {
   Badge,
   Button,
@@ -28,41 +29,71 @@ export default async function DashboardPage() {
   const project = await getActiveProject();
   if (!project || !project.onboardingComplete) redirect("/onboarding");
 
-  const [missions, stages, opportunityCount, activeExperiment, latestReport, postedCount] =
-    await Promise.all([
-      // Today's missions: the highest-value conversations not yet acted on.
-      prisma.opportunity.findMany({
-        where: {
-          projectId: project.id,
-          status: { in: ["NEW", "REVIEWED"] },
-          recommendedAction: { not: "Do not engage" },
-        },
-        orderBy: [{ opportunityScore: "desc" }, { postedAt: "desc" }],
-        take: 4,
-      }),
-      getStageCounts(project.id),
-      prisma.opportunity.count({ where: { projectId: project.id } }),
-      prisma.experiment.findFirst({
-        where: { projectId: project.id, status: { in: ["RUNNING", "PLANNED"] } },
-        orderBy: { createdAt: "desc" },
-        include: { result: true },
-      }),
-      prisma.growthReport.findFirst({
-        where: { projectId: project.id },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.response.count({
-        where: { opportunity: { projectId: project.id }, status: "POSTED" },
-      }),
-    ]);
+  const livePlatforms = await getLivePlatforms();
+  const anyLive = livePlatforms.length > 0;
+  // Once at least one platform is genuinely connected, bundled demo/mock
+  // opportunities are left out of the dashboard entirely — the same rule
+  // discovery itself now follows. With nothing connected yet, every
+  // platform stays in the existing demo experience, unchanged.
+  const platformScope: Prisma.OpportunityWhereInput = anyLive
+    ? { platform: { in: livePlatforms } }
+    : {};
+
+  const [
+    missions,
+    stages,
+    opportunityCount,
+    activeExperiment,
+    latestReport,
+    postedCount,
+    newCount,
+    savedCount,
+    analyzedCount,
+  ] = await Promise.all([
+    // Recommended: the highest-value conversations not yet acted on.
+    prisma.opportunity.findMany({
+      where: {
+        projectId: project.id,
+        ...platformScope,
+        status: { in: ["NEW", "REVIEWED"] },
+        priorityBand: { in: ["HIGH", "REVIEW"] },
+        recommendedAction: { not: "Do not engage" },
+      },
+      orderBy: [{ opportunityScore: "desc" }, { postedAt: "desc" }],
+      take: 4,
+    }),
+    getStageCounts(project.id),
+    prisma.opportunity.count({ where: { projectId: project.id, ...platformScope } }),
+    prisma.experiment.findFirst({
+      where: { projectId: project.id, status: { in: ["RUNNING", "PLANNED"] } },
+      orderBy: { createdAt: "desc" },
+      include: { result: true },
+    }),
+    prisma.growthReport.findFirst({
+      where: { projectId: project.id },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.response.count({
+      where: { opportunity: { projectId: project.id }, status: "POSTED" },
+    }),
+    prisma.opportunity.count({
+      where: { projectId: project.id, ...platformScope, status: "NEW" },
+    }),
+    prisma.opportunity.count({
+      where: { projectId: project.id, ...platformScope, status: "SAVED" },
+    }),
+    prisma.conversation.count({
+      where: {
+        opportunity: { projectId: project.id },
+        analysis: { not: Prisma.DbNull },
+      },
+    }),
+  ]);
 
   const funnelStages = [
     { stage: "OPPORTUNITY" as const, count: opportunityCount },
     ...stages.filter((s) => s.stage !== "OPPORTUNITY"),
   ];
-
-  const value = (stage: string) =>
-    stages.find((s) => s.stage === stage)?.count ?? 0;
 
   const reportPayload = latestReport?.payload as unknown as
     | { recommendation: string; activitySummary: string }
@@ -75,34 +106,34 @@ export default async function DashboardPage() {
         description={`${project.name} · ${opportunityCount} opportunities discovered`}
       />
 
-      <DemoBanner />
+      {!anyLive ? <DemoBanner /> : null}
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Responses posted" value={postedCount} />
-        <StatTile label="Website visits" value={value("WEBSITE_VISIT")} />
-        <StatTile label="Signups" value={value("SIGNUP")} />
-        <StatTile label="Paying users" value={value("PAID")} />
+        <StatTile label="New opportunities" value={newCount} />
+        <StatTile label="Saved" value={savedCount} />
+        <StatTile label="Analyzed" value={analyzedCount} />
+        <StatTile label="Posted" value={postedCount} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader
-              title="Today's growth missions"
-              description="The highest-value conversations you have not acted on yet."
+              title="Your Opportunities"
+              description="High-priority opportunities needing attention."
               action={
                 <Link href="/opportunities">
-                  <Button variant="secondary">All opportunities</Button>
+                  <Button variant="secondary">View Recommended Opportunities</Button>
                 </Link>
               }
             />
             {missions.length === 0 ? (
               <EmptyState
-                title="No missions right now"
-                description="Every scored opportunity is either handled or not worth engaging. Refresh discovery to look for new conversations."
+                title="Nothing needs attention right now"
+                description="Every high-priority opportunity is either handled or dismissed. Find new opportunities to look for more conversations."
                 action={
                   <Link href="/opportunities">
-                    <Button>Go to opportunities</Button>
+                    <Button>View Recommended Opportunities</Button>
                   </Link>
                 }
               />

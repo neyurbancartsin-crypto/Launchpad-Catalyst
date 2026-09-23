@@ -6,6 +6,9 @@
  * narrative around these values, not the values themselves.
  */
 
+import { assessContentQuality } from "./content-signals";
+import { detectsSolutionRequest } from "./promotion-risk";
+
 export interface ScoreComponents {
   icpScore: number;
   problemScore: number;
@@ -161,6 +164,17 @@ export function engagementScore(upvotes: number, commentCount: number): number {
   return clampScore(signal);
 }
 
+/**
+ * How much a genuine personal ask is present — a direct question, or a
+ * phrase from `SOLUTION_REQUEST_PATTERNS` — independent of whether it
+ * happens to match this project's own AI-generated intent phrases. Used
+ * both to give a direct question credit on its own merits, and to tell a
+ * real question apart from a listicle that merely mentions "best".
+ */
+function hasGenuineAsk(text: string): boolean {
+  return /\?/.test(text) || detectsSolutionRequest(text);
+}
+
 export function computeComponents(input: {
   text: string;
   icpKeywords: string[];
@@ -174,11 +188,32 @@ export function computeComponents(input: {
   now?: Date;
 }): ScoreComponents {
   const relevanceCorpus = [input.productCategory, ...input.communityTopics];
+  const genuineAsk = hasGenuineAsk(input.text);
+
+  const rawIcpScore = keywordMatchScore(input.text, input.icpKeywords);
+  const rawProblemScore = keywordMatchScore(input.text, input.problemKeywords);
+  // A direct, personal ask is strong intent evidence on its own — it
+  // shouldn't need to also happen to match one of this project's specific
+  // AI-generated intent phrases to be recognised as intent.
+  const rawIntentScore = Math.max(
+    keywordMatchScore(input.text, input.intentSignals, 2),
+    genuineAsk ? 65 : 0,
+  );
+
+  // Relevant != opportunity (PRD): a promotional pitch, job posting, or
+  // generic listicle ("Best free invoice generator") can overlap with the
+  // product's problem/ICP vocabulary as heavily as someone genuinely
+  // describing their own problem, without being a real opportunity. Topic
+  // relevance is left untouched below — the topic really is related — but
+  // problem/ICP/intent are dampened, since this text isn't a person
+  // describing their own situation.
+  const { isLowQuality } = assessContentQuality(input.text, genuineAsk);
+  const dampen = (score: number) => (isLowQuality ? Math.round(score * 0.3) : score);
 
   return {
-    icpScore: keywordMatchScore(input.text, input.icpKeywords),
-    problemScore: keywordMatchScore(input.text, input.problemKeywords),
-    intentScore: keywordMatchScore(input.text, input.intentSignals, 2),
+    icpScore: dampen(rawIcpScore),
+    problemScore: dampen(rawProblemScore),
+    intentScore: dampen(clampScore(rawIntentScore)),
     recencyScore: recencyScore(input.postedAt, input.now),
     relevanceScore: keywordMatchScore(input.text, relevanceCorpus, 2),
     engagementScore: engagementScore(input.upvotes, input.commentCount),

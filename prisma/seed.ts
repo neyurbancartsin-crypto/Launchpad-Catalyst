@@ -16,28 +16,17 @@ const prisma = new PrismaClient();
 const DEMO_EMAIL = "demo@launchpadcatalyst.test";
 const DEMO_PASSWORD = "demo-password-123";
 
+// The founder now types this directly during onboarding rather than having
+// the AI infer it — the seed mirrors that by setting it explicitly too.
+const PRODUCT_NAME = "ReplyDesk";
+
 const INTAKE: SaaSIntake = {
-  name: "ReplyDesk",
-  website: "https://replydesk.example.com",
   description:
     "ReplyDesk automatically answers repetitive customer support tickets by learning from your past replies and your help centre, so small support teams stop retyping the same six answers every day.",
   problemSolved:
     "Small support teams drown in repetitive support tickets. The same handful of questions arrive over and over, response time slips, and hiring more support staff is too expensive.",
   targetCustomer: "Support leads at small B2B SaaS companies",
-  category: "Customer support automation",
-  pricing: "$49/month",
-  currentUsers: 12,
-  payingUsers: 3,
-  businessModel: "B2B",
-  targetGeography: "US and Europe",
-  competitors: "Zendesk, Intercom",
-  currentChannels: "Occasional Twitter posts",
-  biggestProblem:
-    "I do not know where my customers spend time or which conversations are worth joining.",
-  marketingBudget: "$0-200/month",
-  hoursPerWeek: 8,
-  existingAudience: "400 Twitter followers",
-  socialProfiles: "x.com/replydesk",
+  website: "https://replydesk.example.com",
 };
 
 function daysAgo(days: number): Date {
@@ -61,13 +50,24 @@ async function main() {
   await prisma.saaSProject.deleteMany({ where: { userId: user.id } });
 
   const ai = new MockAIProvider();
-  const analysis = await ai.analyzeSaaS(INTAKE);
-  const channels = await ai.recommendChannels(INTAKE, analysis);
+  const { analysis, channels } = await ai.analyzeSaaSWithChannels(INTAKE);
 
   const project = await prisma.saaSProject.create({
     data: {
       userId: user.id,
-      ...INTAKE,
+      name: PRODUCT_NAME,
+      website: INTAKE.website,
+      description: INTAKE.description,
+      problemSolved: INTAKE.problemSolved,
+      targetCustomer: INTAKE.targetCustomer ?? analysis.primaryCustomer,
+      category: analysis.productCategory,
+      businessModel: analysis.businessModel,
+      targetGeography: "Global",
+      competitors: analysis.likelyCompetitors.join(", ") || "none",
+      currentChannels: "none",
+      biggestProblem: "Not enough qualified conversations yet to know",
+      currentUsers: 12,
+      payingUsers: 3,
       onboardingComplete: true,
       aiAnalysisRaw: analysis as unknown as object,
     },
@@ -91,6 +91,9 @@ async function main() {
       problemMap: analysis.problemMap as unknown as object,
       searchTopics: analysis.searchTopics,
       intentSignals: analysis.intentSignals,
+      positiveKeywords: analysis.positiveKeywords,
+      keywordSynonyms: analysis.keywordSynonyms as unknown as object,
+      negativeKeywords: analysis.negativeKeywords,
     },
   });
 
@@ -100,6 +103,20 @@ async function main() {
 
   const summary = await syncOpportunities(project, icp);
   console.log(`  Discovered ${summary.discovered} opportunities`);
+
+  // Mirror what completeOnboardingAction/refreshOpportunitiesAction record
+  // for a real run, so the seeded account's Discovery panel isn't empty.
+  await prisma.saaSProject.update({
+    where: { id: project.id },
+    data: { lastSyncedAt: new Date() },
+  });
+  await prisma.discoveryRun.create({
+    data: {
+      projectId: project.id,
+      newCount: summary.discovered,
+      updatedCount: summary.updated,
+    },
+  });
 
   // Post a response on the strongest opportunity so the loop has history.
   const best = await prisma.opportunity.findFirst({

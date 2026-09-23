@@ -4,9 +4,15 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getSessionUserId, requireProjectWithIcp } from "@/lib/project";
+import {
+  clearActiveProjectCookie,
+  getActiveProject,
+  getSessionUserId,
+  requireProjectWithIcp,
+  setActiveProjectCookie,
+} from "@/lib/project";
 import { getAIProvider } from "@/lib/ai/registry";
-import { syncOpportunities } from "@/lib/discovery";
+import { runDiscoverySync } from "@/lib/discovery-run";
 import type { SaaSIntake } from "@/lib/ai/types";
 
 export interface FormState {
@@ -15,37 +21,26 @@ export interface FormState {
 }
 
 const intakeSchema = z.object({
-  name: z.string().trim().min(1, "Product name is required").max(120),
-  website: z.string().trim().url("Enter a valid URL, including https://"),
+  productName: z.string().trim().min(1, "Product name is required").max(120),
   description: z.string().trim().min(20, "Describe your product in at least 20 characters"),
   problemSolved: z.string().trim().min(20, "Describe the problem in at least 20 characters"),
-  targetCustomer: z.string().trim().min(3, "Who is this for?"),
-  category: z.string().trim().min(2, "Product category is required"),
-  pricing: z.string().trim().min(1, "Pricing is required"),
-  currentUsers: z.coerce.number().int().min(0).max(1_000_000),
-  payingUsers: z.coerce.number().int().min(0).max(1_000_000),
-  businessModel: z.enum(["B2B", "B2C", "B2B2C"]),
-  targetGeography: z.string().trim().min(2, "Target geography is required"),
-  competitors: z.string().trim().min(1, "List at least one competitor, or 'none'"),
-  currentChannels: z.string().trim().min(1, "List your current channels, or 'none'"),
-  biggestProblem: z.string().trim().min(10, "Describe your biggest acquisition problem"),
-  marketingBudget: z.string().trim().max(120).optional().or(z.literal("")),
-  hoursPerWeek: z.coerce.number().int().min(0).max(168).optional(),
-  existingAudience: z.string().trim().max(300).optional().or(z.literal("")),
-  socialProfiles: z.string().trim().max(300).optional().or(z.literal("")),
+  targetCustomer: z.string().trim().max(300).optional().or(z.literal("")),
+  website: z.string().trim().max(300).optional().or(z.literal("")),
 });
 
 function readIntake(formData: FormData) {
   const raw = Object.fromEntries(formData.entries());
-  return intakeSchema.safeParse({
-    ...raw,
-    hoursPerWeek: raw.hoursPerWeek === "" ? undefined : raw.hoursPerWeek,
-  });
+  return intakeSchema.safeParse(raw);
 }
 
 /**
- * Creates the project, runs the SaaS Analyzer and Channel Strategist, then
- * seeds opportunities so the founder lands on a populated workspace.
+ * Creates the project, runs the combined SaaS Analyzer + Channel Strategist
+ * call, then seeds opportunities so the founder lands on a populated
+ * workspace. The founder answers five fields: product name plus
+ * `SaaSIntake`'s four (description/problem/target customer/website) — the
+ * name is theirs directly, not AI-inferred; everything else on `SaaSProject`
+ * is inferred from the AI analysis or a safe static default; see the
+ * field-by-field mapping below.
  */
 export async function completeOnboardingAction(
   _prev: FormState,
@@ -58,39 +53,74 @@ export async function completeOnboardingAction(
 
   const userId = await getSessionUserId();
   const data = parsed.data;
+  const targetCustomer = data.targetCustomer?.trim() || null;
+  const website = data.website?.trim() || null;
 
   const intake: SaaSIntake = {
-    ...data,
-    marketingBudget: data.marketingBudget || null,
-    hoursPerWeek: data.hoursPerWeek ?? null,
-    existingAudience: data.existingAudience || null,
-    socialProfiles: data.socialProfiles || null,
+    description: data.description,
+    problemSolved: data.problemSolved,
+    targetCustomer,
+    website,
   };
 
   const ai = getAIProvider();
-  const analysis = await ai.analyzeSaaS(intake);
-  const channels = await ai.recommendChannels(intake, analysis);
+  let analysis: Awaited<ReturnType<typeof ai.analyzeSaaSWithChannels>>["analysis"];
+  let channels: Awaited<ReturnType<typeof ai.analyzeSaaSWithChannels>>["channels"];
+  try {
+    ({ analysis, channels } = await ai.analyzeSaaSWithChannels(intake));
+  } catch (error) {
+    // Surface a specific, actionable message on the form instead of letting
+    // this throw past the action into the generic dashboard error boundary.
+    return {
+      error:
+        error instanceof Error
+          ? `Could not analyze your product: ${error.message}`
+          : "Could not analyze your product. Try again.",
+    };
+  }
 
-  const existing = await prisma.saaSProject.findFirst({
-    where: { userId },
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
-  });
+  // A `mode=new` hidden field (set by the onboarding wizard when reached via
+  // /onboarding?new=1) means "create another project" rather than the
+  // default "update the one currently active" behaviour.
+  const createNew = formData.get("mode") === "new";
+  const existing = createNew ? null : await getActiveProject();
+
+  const sharedFields = {
+    name: data.productName,
+    website,
+    description: data.description,
+    problemSolved: data.problemSolved,
+    targetCustomer: targetCustomer ?? analysis.primaryCustomer,
+    category: analysis.productCategory,
+    pricing: null,
+    businessModel: analysis.businessModel,
+    targetGeography: "Global",
+    competitors: analysis.likelyCompetitors.join(", ") || "none",
+    currentChannels: "none",
+    biggestProblem: "Not enough qualified conversations yet to know",
+    onboardingComplete: true,
+    aiAnalysisRaw: analysis as unknown as object,
+  };
 
   const project = existing
     ? await prisma.saaSProject.update({
         where: { id: existing.id },
-        data: { ...data, ...optionalFields(data), onboardingComplete: true, aiAnalysisRaw: analysis as unknown as object },
+        // currentUsers/payingUsers are never asked for again after the first
+        // onboarding, so an update must not overwrite real historical counts.
+        data: sharedFields,
       })
     : await prisma.saaSProject.create({
         data: {
           userId,
-          ...data,
-          ...optionalFields(data),
-          onboardingComplete: true,
-          aiAnalysisRaw: analysis as unknown as object,
+          ...sharedFields,
+          currentUsers: 0,
+          payingUsers: 0,
         },
       });
+
+  // Whichever project this onboarding submission just created or updated
+  // becomes (or stays) the active one the founder is looking at.
+  await setActiveProjectCookie(project.id);
 
   const icp = await prisma.iCP.upsert({
     where: { projectId: project.id },
@@ -111,6 +141,9 @@ export async function completeOnboardingAction(
       problemMap: analysis.problemMap as unknown as object,
       searchTopics: analysis.searchTopics,
       intentSignals: analysis.intentSignals,
+      positiveKeywords: analysis.positiveKeywords,
+      keywordSynonyms: analysis.keywordSynonyms as unknown as object,
+      negativeKeywords: analysis.negativeKeywords,
     },
     update: {
       productSummary: analysis.productSummary,
@@ -128,6 +161,9 @@ export async function completeOnboardingAction(
       problemMap: analysis.problemMap as unknown as object,
       searchTopics: analysis.searchTopics,
       intentSignals: analysis.intentSignals,
+      positiveKeywords: analysis.positiveKeywords,
+      keywordSynonyms: analysis.keywordSynonyms as unknown as object,
+      negativeKeywords: analysis.negativeKeywords,
     },
   });
 
@@ -141,19 +177,14 @@ export async function completeOnboardingAction(
     });
   }
 
-  await syncOpportunities(project, icp);
+  // Surface unreachable platforms rather than silently redirecting as if
+  // every platform succeeded (PRD s35), and record this as the project's
+  // first discovery run. A brand-new project can never already be locked,
+  // so `runDiscoverySync` always actually runs here.
+  await runDiscoverySync(project, icp, { isAuto: false });
 
   revalidatePath("/", "layout");
   redirect("/strategy?onboarded=1");
-}
-
-function optionalFields(data: z.infer<typeof intakeSchema>) {
-  return {
-    marketingBudget: data.marketingBudget || null,
-    hoursPerWeek: data.hoursPerWeek ?? null,
-    existingAudience: data.existingAudience || null,
-    socialProfiles: data.socialProfiles || null,
-  };
 }
 
 // --- ICP editing (PRD s6: the founder must be able to edit the analysis) ----
@@ -211,31 +242,117 @@ export async function updateIcpAction(
   return { ok: true };
 }
 
-/** Re-runs discovery against the current (possibly edited) ICP. */
+/**
+ * "Find New Opportunities" — re-runs discovery against the current
+ * (possibly edited) ICP for the SAME project. Safe to run any number of
+ * times: the platform+externalId/externalPostId uniqueness already on
+ * `Community`/`Opportunity` means a repeat search updates existing rows
+ * instead of duplicating them (see `syncOpportunities`), and there is no
+ * search-count limit here by design. If a run (manual or automatic) is
+ * already in progress for this project, this simply does nothing rather
+ * than starting a second concurrent sync.
+ */
 export async function refreshOpportunitiesAction(): Promise<void> {
   const { project, icp } = await requireProjectWithIcp();
-  const summary = await syncOpportunities(project, icp);
 
   // Surface unreachable platforms rather than letting them look like
-  // "no opportunities found" (PRD s35).
-  const failures = summary.perPlatform.filter((p) => p.error);
-  if (failures.length > 0) {
-    await prisma.saaSProject.update({
-      where: { id: project.id },
-      data: {
-        lastSyncError: failures
-          .map((f) => `${f.platform}: ${f.error}`)
-          .join(" | "),
-        lastSyncedAt: new Date(),
-      },
-    });
-  } else {
-    await prisma.saaSProject.update({
-      where: { id: project.id },
-      data: { lastSyncError: null, lastSyncedAt: new Date() },
-    });
-  }
+  // "no opportunities found" (PRD s35), and keep a short discovery history.
+  await runDiscoverySync(project, icp, { isAuto: false });
 
   revalidatePath("/opportunities");
   revalidatePath("/dashboard");
+}
+
+/**
+ * Turns automatic (cron-driven) discovery on/off for the active project.
+ * Ownership is baked into the `updateMany` `where` clause exactly like
+ * `switchProjectAction` — a made-up or another user's project id matches no
+ * row and is silently ignored.
+ */
+export async function toggleAutoDiscoveryAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  const projectId = String(formData.get("projectId") ?? "");
+  const enabled = formData.get("enabled") === "true";
+
+  await prisma.saaSProject.updateMany({
+    where: { id: projectId, userId },
+    data: { autoDiscoveryEnabled: enabled },
+  });
+
+  revalidatePath("/opportunities");
+}
+
+// --- Project switching (multi-project MVP) ----------------------------------
+
+/**
+ * Switches the founder's active project. The ownership check is part of the
+ * query itself — `projectId` is looked up scoped to `userId`, so posting
+ * another user's (or a made-up) project id here matches no row and is
+ * silently ignored rather than ever activating it.
+ */
+export async function switchProjectAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  const projectId = String(formData.get("projectId") ?? "");
+
+  const project = await prisma.saaSProject.findFirst({
+    where: { id: projectId, userId },
+    select: { id: true },
+  });
+
+  if (project) {
+    await setActiveProjectCookie(project.id);
+    revalidatePath("/", "layout");
+  }
+
+  redirect("/dashboard");
+}
+
+/**
+ * Deletes a project the founder owns, after they've typed its exact name as
+ * confirmation. The ownership check is baked into the lookup, exactly like
+ * `switchProjectAction` — a made-up or another user's project id matches no
+ * row. Deleting the row cascades through every project-scoped table via the
+ * Prisma relations already in place (ICP, Channel, Community, Opportunity
+ * and its Conversation/Response children, Engagement, Experiment and its
+ * Result, GrowthReport, LandingPageAudit) — no manual per-table cleanup.
+ */
+export async function deleteProjectAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const userId = await getSessionUserId();
+  const projectId = String(formData.get("projectId") ?? "");
+  const confirmName = String(formData.get("confirmName") ?? "").trim();
+
+  const project = await prisma.saaSProject.findFirst({
+    where: { id: projectId, userId },
+    select: { id: true, name: true },
+  });
+  if (!project) {
+    return { error: "Project not found." };
+  }
+  if (confirmName !== project.name) {
+    return { error: "Type the project name exactly to confirm deletion." };
+  }
+
+  const active = await getActiveProject();
+  await prisma.saaSProject.delete({ where: { id: project.id } });
+
+  if (active?.id === project.id) {
+    const next = await prisma.saaSProject.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (next) {
+      await setActiveProjectCookie(next.id);
+    } else {
+      await clearActiveProjectCookie();
+    }
+  }
+
+  revalidatePath("/", "layout");
+
+  const remaining = await prisma.saaSProject.count({ where: { userId } });
+  redirect(remaining > 0 ? "/dashboard" : "/onboarding");
 }

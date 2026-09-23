@@ -91,6 +91,7 @@ const SOLUTION_REQUEST_PATTERNS = [
   "what tool",
   "what tools",
   "any tool",
+  "any tool for",
   "anyone using",
   "recommend",
   "recommendation",
@@ -100,8 +101,14 @@ const SOLUTION_REQUEST_PATTERNS = [
   "which one should",
   "best tool",
   "how do i",
+  "how can i",
   "how do you",
   "how are you solving",
+  "does anyone know",
+  "is there a way",
+  "i'm struggling with",
+  "i am struggling with",
+  "i need",
 ];
 
 export function detectsSolutionRequest(text: string): boolean {

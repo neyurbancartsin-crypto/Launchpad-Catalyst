@@ -1,22 +1,51 @@
 import Link from "next/link";
-import type { OpportunityStatus, Platform, Prisma } from "@prisma/client";
+import type { Platform, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireProject } from "@/lib/project";
 import { refreshOpportunitiesAction } from "@/actions/saas-project.actions";
-import { PLATFORM_LABELS, SUPPORTED_PLATFORMS } from "@/lib/adapters/registry";
-import { Badge, Button, Card, EmptyState, PageHeader } from "@/components/ui";
-import { DemoBadge, DemoBanner } from "@/components/ui/demo-badge";
 import {
-  PlatformBadge,
-  relativeTime,
-  RiskBadge,
-  ScoreBadge,
-} from "@/components/opportunities/opportunity-bits";
+  getLivePlatforms,
+  PLATFORM_LABELS,
+  SUPPORTED_PLATFORMS,
+} from "@/lib/adapters/registry";
+import { Button, Card, EmptyState, PageHeader } from "@/components/ui";
+import { DemoBanner } from "@/components/ui/demo-badge";
+import { DiscoveryPanel } from "@/components/opportunities/discovery-panel";
+import { OpportunityCard } from "@/components/opportunities/opportunity-card";
+import { FindOpportunitiesButton } from "@/components/opportunities/find-opportunities-button";
 
 export const metadata = { title: "Opportunities · Launchpad Catalyst" };
 
-const STATUSES: OpportunityStatus[] = ["NEW", "REVIEWED", "RESPONDED", "IGNORED"];
-const SORTS = { score: "Highest score", recent: "Most recent" } as const;
+/**
+ * Phase 7: one primary "view" (what kind of opportunity to see) instead of a
+ * pile of independent filters — Recommended is the default, everything else
+ * is one click away. Platform and sort stay as light secondary controls.
+ */
+const VIEWS = {
+  recommended: {
+    label: "Recommended",
+    where: { priorityBand: { in: ["HIGH", "REVIEW"] }, status: { not: "IGNORED" } },
+  },
+  high: {
+    label: "High Opportunity",
+    where: { priorityBand: "HIGH", status: { not: "IGNORED" } },
+  },
+  relevant: {
+    label: "Relevant",
+    where: { priorityBand: "LOW", status: { not: "IGNORED" } },
+  },
+  saved: { label: "Saved", where: { status: "SAVED" } },
+  dismissed: { label: "Dismissed", where: { status: "IGNORED" } },
+  all: { label: "All", where: {} },
+} as const satisfies Record<string, { label: string; where: Prisma.OpportunityWhereInput }>;
+
+type ViewKey = keyof typeof VIEWS;
+
+const SORTS = {
+  score: "Highest opportunity",
+  recent: "Newest",
+  engagement: "Highest engagement",
+} as const;
 
 type SortKey = keyof typeof SORTS;
 
@@ -27,29 +56,60 @@ export default async function OpportunitiesPage({
 }) {
   const project = await requireProject();
   const params = await searchParams;
+  const livePlatforms = await getLivePlatforms();
+  const anyLive = livePlatforms.length > 0;
 
   const platform = single(params.platform) as Platform | undefined;
-  const status = single(params.status) as OpportunityStatus | undefined;
-  const minScore = Number(single(params.minScore) ?? "0") || 0;
-  const sort = (single(params.sort) as SortKey) ?? "score";
+  const view = parseView(single(params.view));
+  const sort = parseSort(single(params.sort));
+
+  // An explicit platform choice is always honoured, including a mock one —
+  // a founder can still deliberately preview demo content for a platform
+  // they haven't connected. Left at "All platforms", the default view shows
+  // only genuinely live platforms once at least one is connected, so demo
+  // fixtures never blend into what looks like real results; with nothing
+  // connected yet, every platform stays in the existing demo experience.
+  const explicitPlatform =
+    platform && SUPPORTED_PLATFORMS.includes(platform) ? platform : undefined;
+  const platformScope: Prisma.OpportunityWhereInput = explicitPlatform
+    ? { platform: explicitPlatform }
+    : anyLive
+      ? { platform: { in: livePlatforms } }
+      : {};
 
   const where: Prisma.OpportunityWhereInput = {
     projectId: project.id,
-    ...(platform && SUPPORTED_PLATFORMS.includes(platform) ? { platform } : {}),
-    ...(status && STATUSES.includes(status) ? { status } : {}),
-    ...(minScore > 0 ? { opportunityScore: { gte: minScore } } : {}),
+    ...platformScope,
+    ...VIEWS[view].where,
   };
 
-  const [opportunities, total] = await Promise.all([
+  const [opportunities, total, latestRun, recentRuns, lastAutoRun] = await Promise.all([
     prisma.opportunity.findMany({
       where,
       orderBy:
         sort === "recent"
           ? { postedAt: "desc" }
-          : [{ opportunityScore: "desc" }, { postedAt: "desc" }],
+          : sort === "engagement"
+            ? [{ engagementScore: "desc" }, { opportunityScore: "desc" }]
+            : [{ opportunityScore: "desc" }, { postedAt: "desc" }],
       take: 100,
     }),
-    prisma.opportunity.count({ where: { projectId: project.id } }),
+    prisma.opportunity.count({ where: { projectId: project.id, ...platformScope } }),
+    prisma.discoveryRun.findFirst({
+      where: { projectId: project.id },
+      orderBy: { runAt: "desc" },
+    }),
+    prisma.discoveryRun.findMany({
+      where: { projectId: project.id },
+      orderBy: { runAt: "desc" },
+      take: 4,
+      select: { id: true, runAt: true, newCount: true, updatedCount: true },
+    }),
+    prisma.discoveryRun.findFirst({
+      where: { projectId: project.id, isAuto: true },
+      orderBy: { runAt: "desc" },
+      select: { newCount: true },
+    }),
   ]);
 
   const anyDemo = opportunities.some((o) => o.isDemoData);
@@ -59,13 +119,16 @@ export default async function OpportunitiesPage({
       <PageHeader
         title="Opportunities"
         description="Conversations where someone may have the problem you solve, scored and ranked."
-        action={
-          <form action={refreshOpportunitiesAction}>
-            <Button variant="secondary" type="submit">
-              Refresh opportunities
-            </Button>
-          </form>
-        }
+      />
+
+      <DiscoveryPanel
+        projectId={project.id}
+        lastSyncedAt={project.lastSyncedAt}
+        runs={recentRuns}
+        autoDiscoveryEnabled={project.autoDiscoveryEnabled}
+        discoveryIntervalHours={project.discoveryIntervalHours}
+        lastAutoDiscoveryAt={project.lastAutoDiscoveryAt}
+        lastAutoNewCount={lastAutoRun?.newCount ?? null}
       />
 
       {project.lastSyncError ? (
@@ -74,63 +137,63 @@ export default async function OpportunitiesPage({
           className="mb-6 rounded-xl border border-[#f0c4c1] bg-danger-soft px-4 py-3"
         >
           <p className="text-sm font-medium text-danger">
-            Some platforms could not be reached on the last run
+            Some platforms had a problem on the last run
           </p>
           <p className="mt-0.5 text-sm text-danger/90">{project.lastSyncError}</p>
         </div>
       ) : null}
 
-      {anyDemo ? <DemoBanner /> : null}
+      {anyDemo ? (
+        <DemoBanner title={anyLive ? "Some results shown are demo data" : undefined}>
+          {anyLive
+            ? "You're viewing bundled demo conversations for a platform you haven't connected live. Connect it in Settings, or change the platform filter to see only your live results."
+            : undefined}
+        </DemoBanner>
+      ) : null}
 
       <Card className="mb-6">
-        <form className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {(Object.entries(VIEWS) as [ViewKey, (typeof VIEWS)[ViewKey]][]).map(([key, v]) => (
+            <Link
+              key={key}
+              href={`/opportunities?${buildQuery({ view: key, platform, sort })}`}
+              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+                view === key
+                  ? "border-[#c4d3f7] bg-brand-soft text-brand"
+                  : "border-border text-muted hover:bg-surface-muted"
+              }`}
+            >
+              {v.label}
+            </Link>
+          ))}
+        </div>
+
+        <form className="mt-4 flex flex-wrap items-end gap-3 border-t border-border pt-4">
+          <input type="hidden" name="view" value={view} />
           <FilterSelect
             name="platform"
             label="Platform"
             value={platform ?? ""}
             options={[
               { value: "", label: "All platforms" },
-              ...SUPPORTED_PLATFORMS.map((p) => ({
-                value: p,
-                label: PLATFORM_LABELS[p],
-              })),
-            ]}
-          />
-          <FilterSelect
-            name="status"
-            label="Status"
-            value={status ?? ""}
-            options={[
-              { value: "", label: "All statuses" },
-              ...STATUSES.map((s) => ({ value: s, label: titleCase(s) })),
-            ]}
-          />
-          <FilterSelect
-            name="minScore"
-            label="Minimum score"
-            value={String(minScore || "")}
-            options={[
-              { value: "", label: "Any score" },
-              { value: "80", label: "80+ high priority" },
-              { value: "60", label: "60+ worth reviewing" },
-              { value: "40", label: "40+ low priority" },
+              ...SUPPORTED_PLATFORMS.map((p) => ({ value: p, label: PLATFORM_LABELS[p] })),
             ]}
           />
           <FilterSelect
             name="sort"
             label="Sort by"
             value={sort}
-            options={Object.entries(SORTS).map(([value, label]) => ({
-              value,
-              label,
-            }))}
+            options={Object.entries(SORTS).map(([value, label]) => ({ value, label }))}
           />
           <Button type="submit" variant="secondary">
             Apply
           </Button>
-          {(platform || status || minScore) ? (
-            <Link href="/opportunities" className="text-sm text-brand hover:underline">
-              Clear
+          {platform ? (
+            <Link
+              href={`/opportunities?${buildQuery({ view, sort })}`}
+              className="text-sm text-brand hover:underline"
+            >
+              Clear platform filter
             </Link>
           ) : null}
         </form>
@@ -138,20 +201,22 @@ export default async function OpportunitiesPage({
 
       {opportunities.length === 0 ? (
         <EmptyState
-          title={total === 0 ? "No opportunities yet" : "Nothing matches these filters"}
+          title={total === 0 ? "No opportunities yet" : "No new opportunities yet"}
           description={
             total === 0
               ? "Run discovery to find conversations that match your ideal customer profile."
-              : "Try widening the score threshold or clearing the platform filter."
+              : view === "recommended"
+                ? "We couldn't find new conversations matching your product right now. Try again later, or check other views below."
+                : "Nothing matches this view yet."
           }
           action={
             total === 0 ? (
               <form action={refreshOpportunitiesAction}>
-                <Button type="submit">Find opportunities</Button>
+                <FindOpportunitiesButton />
               </form>
             ) : (
               <Link href="/opportunities">
-                <Button variant="secondary">Clear filters</Button>
+                <Button variant="secondary">Back to Recommended</Button>
               </Link>
             )
           }
@@ -163,39 +228,11 @@ export default async function OpportunitiesPage({
           </p>
           <ul className="space-y-3">
             {opportunities.map((opportunity) => (
-              <li key={opportunity.id}>
-                <Link
-                  href={`/opportunities/${opportunity.id}`}
-                  className="block rounded-xl border border-border bg-surface p-4 transition-colors hover:border-[#c4d3f7] hover:bg-brand-soft/30"
-                >
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <ScoreBadge
-                      score={opportunity.opportunityScore}
-                      band={opportunity.priorityBand}
-                    />
-                    <PlatformBadge platform={opportunity.platform} />
-                    <Badge>{opportunity.communityName}</Badge>
-                    <RiskBadge risk={opportunity.promotionRisk} />
-                    {opportunity.status !== "NEW" ? (
-                      <Badge tone="brand">{titleCase(opportunity.status)}</Badge>
-                    ) : null}
-                    {opportunity.isDemoData ? <DemoBadge /> : null}
-                  </div>
-                  <h2 className="text-sm font-semibold text-foreground">
-                    {opportunity.title}
-                  </h2>
-                  <p className="mt-1 line-clamp-2 text-sm text-muted">
-                    {opportunity.content}
-                  </p>
-                  <p className="mt-2 text-xs text-muted">
-                    {opportunity.author} · {relativeTime(opportunity.postedAt)} ·{" "}
-                    {opportunity.commentCount} comments ·{" "}
-                    <span className="font-medium text-foreground">
-                      {opportunity.recommendedAction}
-                    </span>
-                  </p>
-                </Link>
-              </li>
+              <OpportunityCard
+                key={opportunity.id}
+                opportunity={opportunity}
+                isNew={Boolean(latestRun && opportunity.discoveredAt >= latestRun.runAt)}
+              />
             ))}
           </ul>
         </>
@@ -237,6 +274,18 @@ function single(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function titleCase(value: string): string {
-  return value.charAt(0) + value.slice(1).toLowerCase();
+function parseView(value: string | undefined): ViewKey {
+  return value && value in VIEWS ? (value as ViewKey) : "recommended";
+}
+
+function parseSort(value: string | undefined): SortKey {
+  return value && value in SORTS ? (value as SortKey) : "score";
+}
+
+function buildQuery(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
+  return search.toString();
 }

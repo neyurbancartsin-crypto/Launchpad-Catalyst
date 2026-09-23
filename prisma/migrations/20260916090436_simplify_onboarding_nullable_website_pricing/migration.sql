@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "SaaSProject" ALTER COLUMN "website" DROP NOT NULL,
+ALTER COLUMN "pricing" DROP NOT NULL;

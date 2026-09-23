@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { Platform } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireProject } from "@/lib/project";
 import { getAIProvider } from "@/lib/ai/registry";
@@ -16,7 +17,9 @@ const createSchema = z
   .object({
     name: z.string().trim().min(1, "Give the experiment a name").max(120),
     hypothesis: z.string().trim().min(10, "Describe what you expect to happen"),
-    channel: z.enum(["REDDIT", "X", "LINKEDIN", ""]).optional(),
+    // The full enum, not just the active discovery platforms — a founder can
+    // still record an experiment against a deferred platform.
+    channel: z.union([z.nativeEnum(Platform), z.literal("")]).optional(),
     action: z.string().trim().min(5, "Describe the action you will take"),
     startDate: z.coerce.date(),
     endDate: z.coerce.date(),

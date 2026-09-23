@@ -8,20 +8,23 @@ import {
   saveResponseAction,
   setOpportunityStatusAction,
 } from "@/actions/responses.actions";
+import { analyzeConversationAction } from "@/actions/opportunities.actions";
 import type { CommentAnalysis } from "@/lib/ai/types";
 import { Badge, Button, Card, CardHeader, PageHeader } from "@/components/ui";
 import { DemoBadge } from "@/components/ui/demo-badge";
 import {
-  BAND_LABELS,
+  explainOpportunity,
   PlatformBadge,
   relativeTime,
   RiskBadge,
   ScoreBadge,
+  TierBadge,
 } from "@/components/opportunities/opportunity-bits";
 import {
   ConversationThread,
   type StoredComment,
 } from "@/components/opportunities/conversation-thread";
+import { AnalyzeConversationButton } from "@/components/opportunities/analyze-conversation-button";
 import { ScoreBreakdown } from "@/components/opportunities/score-breakdown";
 import { ResponseCopilot } from "@/components/opportunities/response-copilot";
 
@@ -73,19 +76,21 @@ export default async function OpportunityDetailPage({
         }
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <ScoreBadge
           score={opportunity.opportunityScore}
           band={opportunity.priorityBand}
         />
-        <Badge tone={opportunity.priorityBand === "HIGH" ? "success" : "neutral"}>
-          {BAND_LABELS[opportunity.priorityBand]}
-        </Badge>
+        <TierBadge band={opportunity.priorityBand} />
         <PlatformBadge platform={opportunity.platform} />
         <RiskBadge risk={opportunity.promotionRisk} />
         <Badge tone="brand">{opportunity.status.toLowerCase()}</Badge>
         {opportunity.isDemoData ? <DemoBadge /> : null}
       </div>
+      <p className="mb-6 text-sm text-muted">
+        <span className="font-medium text-foreground">Why this opportunity: </span>
+        {explainOpportunity(opportunity)}
+      </p>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0 space-y-6">
@@ -105,7 +110,9 @@ export default async function OpportunityDetailPage({
               description={
                 comments.length === 0
                   ? "No comments were retrieved for this post."
-                  : `${comments.length} comments retrieved. ${worthResponding} worth responding to.`
+                  : analysis.length > 0
+                    ? `${comments.length} comments retrieved. ${worthResponding} worth responding to.`
+                    : `${comments.length} comments retrieved. Not analysed yet.`
               }
               action={opportunity.isDemoData ? <DemoBadge /> : null}
             />
@@ -114,7 +121,17 @@ export default async function OpportunityDetailPage({
                 Nothing to analyse yet.
               </p>
             ) : (
-              <ConversationThread comments={comments} analysis={analysis} />
+              <>
+                {analysis.length === 0 ? (
+                  <div className="mb-4">
+                    <AnalyzeConversationButton
+                      opportunityId={opportunity.id}
+                      action={analyzeConversationAction}
+                    />
+                  </div>
+                ) : null}
+                <ConversationThread comments={comments} analysis={analysis} />
+              </>
             )}
           </Card>
 
@@ -174,9 +191,19 @@ export default async function OpportunityDetailPage({
           </Card>
 
           <Card>
-            <CardHeader title="Status" />
+            <CardHeader
+              title="Status"
+              description="Save it for later, or dismiss it so it stops showing in Recommended."
+            />
             <div className="flex flex-wrap gap-2">
-              {(["REVIEWED", "IGNORED", "NEW"] as const).map((status) => (
+              {(
+                [
+                  { status: "NEW", label: "New" },
+                  { status: "REVIEWED", label: "Reviewed" },
+                  { status: "SAVED", label: "Save" },
+                  { status: "IGNORED", label: "Dismiss" },
+                ] as const
+              ).map(({ status, label }) => (
                 <form key={status} action={setOpportunityStatusAction}>
                   <input type="hidden" name="opportunityId" value={opportunity.id} />
                   <input type="hidden" name="status" value={status} />
@@ -184,7 +211,7 @@ export default async function OpportunityDetailPage({
                     type="submit"
                     variant={opportunity.status === status ? "primary" : "secondary"}
                   >
-                    {status.charAt(0) + status.slice(1).toLowerCase()}
+                    {label}
                   </Button>
                 </form>
               ))}

@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { getSessionUserId } from "@/lib/project";
+import { getActiveProject, getSessionUserId, getUserProjects } from "@/lib/project";
 import { logoutAction } from "@/actions/auth.actions";
+import { switchProjectAction } from "@/actions/saas-project.actions";
 import { Sidebar } from "@/components/nav/sidebar";
+import { ProjectSwitcher } from "@/components/nav/project-switcher";
 import { Button } from "@/components/ui";
 
 export default async function DashboardLayout({
@@ -16,6 +18,11 @@ export default async function DashboardLayout({
   // Also confirms the account still exists behind the JWT.
   await getSessionUserId();
 
+  const [projects, activeProject] = await Promise.all([
+    getUserProjects(),
+    getActiveProject(),
+  ]);
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-surface">
@@ -24,6 +31,18 @@ export default async function DashboardLayout({
             Launchpad Catalyst
           </Link>
           <div className="flex items-center gap-3">
+            {projects.length > 0 ? (
+              <>
+                <ProjectSwitcher
+                  projects={projects}
+                  activeProjectId={activeProject?.id ?? null}
+                  switchAction={switchProjectAction}
+                />
+                <Link href="/onboarding?new=1">
+                  <Button variant="secondary">New project</Button>
+                </Link>
+              </>
+            ) : null}
             <span className="hidden text-sm text-muted sm:inline">
               {session.user.email}
             </span>

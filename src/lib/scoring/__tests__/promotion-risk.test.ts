@@ -82,6 +82,14 @@ describe("detectsSolutionRequest", () => {
     expect(detectsSolutionRequest("Alternative to Zendesk?")).toBe(true);
   });
 
+  it("recognises the additional phrases requested for the MVP polish pass", () => {
+    expect(detectsSolutionRequest("Does anyone know a good way to track this?")).toBe(true);
+    expect(detectsSolutionRequest("Is there a way to automate this?")).toBe(true);
+    expect(detectsSolutionRequest("I'm struggling with overdue invoices")).toBe(true);
+    expect(detectsSolutionRequest("I need a tool for this")).toBe(true);
+    expect(detectsSolutionRequest("How can I fix this?")).toBe(true);
+  });
+
   it("does not fire on a plain statement", () => {
     expect(detectsSolutionRequest("We shipped our new pricing page today.")).toBe(false);
   });

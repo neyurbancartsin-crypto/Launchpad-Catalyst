@@ -16,6 +16,9 @@ enum Platform {
   REDDIT
   X
   LINKEDIN
+  GITHUB
+  HACKERNEWS
+  STACKOVERFLOW
 }
 
 enum ConnectionStatus {
@@ -35,6 +38,8 @@ enum OpportunityStatus {
   REVIEWED
   RESPONDED
   IGNORED
+  /// Founder bookmarked it for later without having acted on it yet.
+  SAVED
 }
 
 enum ResponseStatus {
@@ -163,13 +168,18 @@ model SaaSProject {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Required onboarding fields (PRD s5)
+  // Simplified onboarding (2 required questions + 2 optional) only collects
+  // description, problemSolved, and optionally targetCustomer/website
+  // directly from the founder; everything else here is inferred by the AI
+  // analysis (see SaaSAnalysis.productName/businessModel/likelyCompetitors)
+  // or defaulted, and never asked for again — see completeOnboardingAction.
   name             String
-  website          String
+  website          String? // genuinely unknown until provided; no reliable default
   description      String  @db.Text
   problemSolved    String  @db.Text
   targetCustomer   String  @db.Text
   category         String
-  pricing          String
+  pricing          String? // never asked for; not reliably inferable either
   currentUsers     Int     @default(0)
   payingUsers      Int     @default(0)
   businessModel    String // "B2B" | "B2C" | "B2B2C"
@@ -190,6 +200,21 @@ model SaaSProject {
   /// Set when a platform could not be reached during the last discovery run.
   lastSyncError      String?   @db.Text
 
+  // Background discovery (additive; existing projects get safe defaults).
+  /// Whether the scheduled cron should run discovery for this project at all.
+  autoDiscoveryEnabled   Boolean   @default(true)
+  /// How often, at minimum, automatic discovery should run — the cron may
+  /// fire more often than this; each project's own interval still gates it.
+  discoveryIntervalHours Int       @default(6)
+  /// Set only by the cron path, separately from lastSyncedAt (which covers
+  /// both manual and automatic runs) — lets the UI show "last automatic
+  /// search" distinctly from a founder's own manual "Find New Opportunities".
+  lastAutoDiscoveryAt    DateTime?
+  /// Simple claim-based concurrency lock (set when a sync starts, cleared in
+  /// a `finally` when it ends). A lock older than the stale timeout is
+  /// treated as abandoned, so a crashed run cannot lock a project forever.
+  discoveryStartedAt     DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -201,8 +226,29 @@ model SaaSProject {
   experiments    Experiment[]
   reports        GrowthReport[]
   pageAudits     LandingPageAudit[]
+  discoveryRuns  DiscoveryRun[]
 
   @@index([userId])
+}
+
+/// One row per discovery sync, so the founder can see when a project was
+/// last searched and how many genuinely new opportunities it found — the
+/// simplest persistence that supports Phase 4's "last searched" / history
+/// UI without a full event-sourcing system.
+model DiscoveryRun {
+  id        String      @id @default(cuid())
+  projectId String
+  project   SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  runAt        DateTime @default(now())
+  newCount     Int
+  updatedCount Int
+  /// Same format as SaaSProject.lastSyncError; null when every platform succeeded.
+  errorSummary String?  @db.Text
+  /// True when the cron triggered this run rather than a founder's manual click.
+  isAuto       Boolean  @default(false)
+
+  @@index([projectId, runAt])
 }
 
 model ICP {
@@ -231,6 +277,17 @@ model ICP {
   problemMap    Json
   searchTopics  String[]
   intentSignals String[]
+
+  // Search intelligence (additive — searchTopics/intentSignals above stay as
+  // they were for backward compatibility; these are the richer inputs the
+  // deterministic search-strategy builder (src/lib/search/build-query.ts)
+  // prefers when present, falling back to searchTopics for older projects).
+  /// Specific positive/problem phrases, e.g. "unpaid invoice" rather than just "invoice".
+  positiveKeywords String[] @default([])
+  /// [{ keyword, synonyms[] }] — variations of a positive keyword.
+  keywordSynonyms  Json     @default("[]")
+  /// Phrases that should exclude a conversation even if it matches positively elsewhere.
+  negativeKeywords String[] @default([])
 
   editedByUser Boolean  @default(false)
   createdAt    DateTime @default(now())

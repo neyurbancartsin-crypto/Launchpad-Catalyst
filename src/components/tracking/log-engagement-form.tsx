@@ -35,7 +35,7 @@ export function LogEngagementForm({
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Platform">
-          <Select name="platform" defaultValue="REDDIT">
+          <Select name="platform" defaultValue={SUPPORTED_PLATFORMS[0]}>
             {SUPPORTED_PLATFORMS.map((platform) => (
               <option key={platform} value={platform}>
                 {PLATFORM_LABELS[platform]}
