@@ -70,7 +70,7 @@ export function AuthForm({
         {state.error ? (
           <p
             role="alert"
-            className="rounded-lg border border-[#f0c4c1] bg-danger-soft px-3 py-2 text-sm text-danger"
+            className="rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger"
           >
             {state.error}
           </p>

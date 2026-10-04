@@ -222,4 +222,24 @@ describe("syncOpportunities - GitHub search budget and error handling", () => {
     expect(result.perPlatform[0]).toMatchObject({ platform: "GITHUB", opportunities: 1 });
     expect(result.perPlatform[0].error).toBeUndefined();
   });
+
+  // Regression: "Open in original" reads Opportunity.sourceUrl directly, so
+  // whatever canonical URL an adapter's PostDTO carries must survive the
+  // upsert untouched — persistence must never substitute, rewrite, or
+  // derive a different URL (e.g. from the post body) than the one the
+  // adapter already determined to be canonical.
+  it("persists the adapter's PostDTO.url verbatim as the opportunity's sourceUrl", async () => {
+    const canonicalUrl = "https://news.ycombinator.com/item?id=45678901";
+    const post = { ...makePost("post-1", "first"), url: canonicalUrl };
+    const adapter = makeFakeAdapter({
+      discoverCommunities: vi.fn().mockResolvedValue([makeCommunity("first", ["a"])]),
+      searchPosts: vi.fn().mockResolvedValue([post]),
+    });
+    mockGetAdapter.mockReturnValue(adapter);
+
+    await syncOpportunities(project, icp);
+
+    const [{ create }] = prismaMocks.opportunityUpsert.mock.calls[0];
+    expect(create.sourceUrl).toBe(canonicalUrl);
+  });
 });

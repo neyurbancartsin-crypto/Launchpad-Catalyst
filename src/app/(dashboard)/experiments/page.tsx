@@ -42,7 +42,7 @@ export default async function ExperimentsPage() {
             <li key={experiment.id}>
               <Link
                 href={`/experiments/${experiment.id}`}
-                className="block rounded-xl border border-border bg-surface p-4 transition-colors hover:border-[#c4d3f7]"
+                className="block rounded-xl border border-border bg-surface p-4 transition-colors hover:border-brand-border"
               >
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Badge
@@ -77,9 +77,6 @@ export default async function ExperimentsPage() {
                   {experiment.endDate.toLocaleDateString()}
                   {experiment.targetConversations > 0
                     ? ` · target ${experiment.targetConversations} conversations`
-                    : ""}
-                  {experiment.result
-                    ? ` · ${experiment.result.signups} signups`
                     : ""}
                 </p>
               </Link>

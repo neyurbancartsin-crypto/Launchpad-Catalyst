@@ -12,13 +12,17 @@ import { determineRecommendedAction } from "@/lib/scoring/recommended-action";
 import {
   computeComponents,
   computeOverallScore,
+  detectsUnsupportedCapability,
   priorityBand,
+  topMatchedPhrase,
 } from "@/lib/scoring/opportunity-score";
 import { diagnoseBottleneck } from "./mock-provider";
 import type {
   AIProvider,
   CommentAnalysis,
   ConversationAnalysisInput,
+  DiscoveryQueryGenerationInput,
+  DiscoveryQueryGenerationResult,
   ExperimentAnalysis,
   ExperimentAnalysisInput,
   GrowthAnalysis,
@@ -129,6 +133,8 @@ export class ClaudeAIProvider implements AIProvider {
         }),
       ),
       negativeKeywords: z.array(z.string()),
+      supportedUseCases: z.array(z.string()),
+      unsupportedUseCases: z.array(z.string()),
       channels: z.array(
         z.object({
           platform: z.enum(SUPPORTED_PLATFORMS as [Platform, ...Platform[]]),
@@ -156,15 +162,18 @@ export class ClaudeAIProvider implements AIProvider {
         "positiveKeywords: 5-12 SPECIFIC problem-shaped phrases a real person would actually type or write, sharper than searchTopics — e.g. for an invoicing tool, prefer \"unpaid invoice\" or \"client hasn't paid\" over just \"invoice\". Every product is different: derive these from what this specific product actually solves, never a fixed template. " +
         "keywordSynonyms: for the positiveKeywords that have genuinely common alternate wordings, list a few real variations people use — e.g. \"freelancer\" -> [\"independent consultant\", \"self-employed\", \"solo business\"]. Skip a keyword entirely if it has no natural variation; do not force synonyms nobody would actually use. " +
         "negativeKeywords: a SHORT, conservative list of phrases that would make a conversation clearly irrelevant even if it contains a positive keyword — e.g. unrelated industries, job/hiring posts, or a different meaning of an ambiguous term. Only include terms you are confident are false-positive traps for this specific product; leave the array empty rather than guessing. " +
+        "supportedUseCases: 3-8 concrete scenarios this product actually handles, in plain language a customer would use (e.g. for a dead-pixel checker: \"testing a new TV for dead pixels\", \"checking a second-hand monitor before buying\"). Base these only on what the founder's description and problem statement actually say or clearly imply — do not invent capabilities. " +
+        "unsupportedUseCases: capabilities someone might confuse this product for but it genuinely does NOT have (e.g. for a dead-pixel *detection* tool: \"physically repairing a cracked screen\"). Only include ones you are reasonably confident about from the description; leave the array empty rather than guessing — an empty array is the honest answer when nothing obvious is out of scope. " +
         "You also advise which channels to spend limited time on. Score honestly — if a channel is a poor fit for this business model or audience, say so with a low score. " +
         `Return exactly one channel entry for each of ${platformNames}.`,
       prompt: [
         `What it does: ${input.description}`,
         `Problem solved: ${input.problemSolved}`,
         `Target customer: ${input.targetCustomer ?? "not specified — infer it"}`,
+        `Main use cases: ${input.useCases ?? "not specified — infer likely use cases from the description"}`,
         `Website: ${input.website ?? "not provided"}`,
         "",
-        `Produce the product understanding, ICP, problem map, search topics, intent signals and search keyword strategy (positive keywords, synonyms, negative keywords) for this product, and recommend how to use ${platformNames} for it.`,
+        `Produce the product understanding, ICP, problem map, search topics, intent signals, search keyword strategy (positive keywords, synonyms, negative keywords), and the supported/unsupported use-case lists for this product, and recommend how to use ${platformNames} for it.`,
       ].join("\n"),
     });
 
@@ -173,6 +182,48 @@ export class ClaudeAIProvider implements AIProvider {
       analysis,
       channels: [...channels].sort((a, b) => b.fitScore - a.fitScore),
     };
+  }
+
+  // --- Discovery Query Generator -------------------------------------------
+
+  /**
+   * One call per discovery cycle — reuses the already-stored ICP (never
+   * regenerates the business understanding) and proposes a fresh batch of
+   * search angles, explicitly steered away from recently-used phrasing. Pure
+   * retrieval input: never reaches scoring (see discovery.ts).
+   */
+  async generateDiscoveryQueries(
+    input: DiscoveryQueryGenerationInput,
+  ): Promise<DiscoveryQueryGenerationResult> {
+    const schema = z.object({ queries: z.array(z.string()) });
+
+    const result = await this.parse({
+      schema,
+      effort: "medium",
+      maxTokens: 3000,
+      system:
+        "You generate search queries to find real conversations where potential customers describe their problem, in their own words — not SEO keywords. " +
+        "Write 8-12 short, natural phrases a real person would type or say, each exploring a DIFFERENT angle: a direct problem statement, a pain/frustration expression, a how-to or help-seeking question, troubleshooting language, a comparison or 'alternative to X' phrasing, a workflow description, \"is there a tool for X\", a manual-workaround description, a complaint, buying/tool-seeking intent, and other realistic customer phrasing. " +
+        "Semantic diversity, not superficial variation: do NOT produce near-duplicates of the same phrase (e.g. \"unpaid invoice\", \"unpaid invoice issue\", \"unpaid invoice problem\" is bad — vary the actual angle and wording, not just add/remove a word). " +
+        "You will be given queries already used in recent discovery cycles for this project — do not repeat them or produce close variants of them; explore genuinely different angles instead. " +
+        "Base every query only on the business context given — never invent a capability or use case the product doesn't have.",
+      prompt: [
+        `Product: ${input.productSummary}`,
+        `Core problem it solves: ${input.coreProblem}`,
+        `Primary customer: ${input.primaryCustomer}`,
+        `Pain points: ${input.painPoints.join(", ") || "none given"}`,
+        `Problems it addresses: ${input.problemMap.map((p) => p.problem).join(", ") || "none given"}`,
+        `Supported use cases: ${input.supportedUseCases.join(", ") || "none given"}`,
+        `Known vocabulary/keywords: ${input.positiveKeywords.join(", ") || "none given"}`,
+        `Search topics: ${input.searchTopics.join(", ") || "none given"}`,
+        "",
+        input.recentQueries.length > 0
+          ? `Queries already used in recent cycles (avoid repeating or closely paraphrasing these):\n${input.recentQueries.map((q) => `- ${q}`).join("\n")}`
+          : "No prior queries recorded yet — this is the first cycle.",
+      ].join("\n"),
+    });
+
+    return { queries: result.queries };
   }
 
   // --- Conversation Analyzer (PRD s10) -------------------------------------
@@ -252,12 +303,15 @@ export class ClaudeAIProvider implements AIProvider {
       upvotes: input.upvotes,
       commentCount: input.commentCount,
       postedAt: input.postedAt,
+      unsupportedUseCases: input.unsupportedUseCases ?? [],
     });
 
     const opportunityScore = computeOverallScore(components);
     const band = priorityBand(opportunityScore);
     const asksForSolution = detectsSolutionRequest(text);
     const mentionsCompetitor = mentionsAnyCompetitor(text, input.competitors);
+    const unsupportedCapability = detectsUnsupportedCapability(text, input.unsupportedUseCases ?? []);
+    const matchedProblemPhrase = topMatchedPhrase(text, input.problemKeywords);
 
     const risk = assessPromotionRisk({
       intentScore: components.intentScore,
@@ -274,6 +328,8 @@ export class ClaudeAIProvider implements AIProvider {
       intentScore: components.intentScore,
       problemScore: components.problemScore,
       asksForSolution,
+      matchedProblemPhrase,
+      unsupportedCapability,
     });
 
     // The rationale is the deterministic rule text from
@@ -363,8 +419,11 @@ export class ClaudeAIProvider implements AIProvider {
     // The bottleneck verdict is rule-based so it cannot drift between runs.
     const { bottleneck, explanation } = diagnoseBottleneck(input.funnel);
 
+    // Ranked by engagement, not signups — there is no attribution link from
+    // a specific conversation to a specific signup, so "best channel" must
+    // not be framed as "the channel that produced your signups".
     const bestPlatform = [...input.perPlatform].sort(
-      (a, b) => b.signups - a.signups || b.engagements - a.engagements,
+      (a, b) => b.engagements - a.engagements,
     )[0];
 
     const schema = z.object({
@@ -383,22 +442,18 @@ export class ClaudeAIProvider implements AIProvider {
         "You are a growth analyst for an early-stage SaaS founder. Be direct and specific. " +
         "Do not blame marketing by default — if the numbers point at conversion, activation or demand, say that. " +
         `The diagnosed bottleneck is ${bottleneck} and you must not contradict it; explain it in your own words using their numbers. ` +
-        "nextActions: two or three concrete things to do this week. If the numbers are too small to conclude anything, say so plainly.",
+        "nextActions: two or three concrete things to do this week. If the numbers are too small to conclude anything, say so plainly. " +
+        "There is no data linking a specific conversation to a specific signup or sale — never claim or imply that one.",
       prompt: [
         `Period: ${input.periodStart.toDateString()} to ${input.periodEnd.toDateString()}`,
         `Opportunities discovered: ${input.funnel.opportunities}`,
         `Conversations engaged: ${input.funnel.engagements}`,
         `Profile visits: ${input.funnel.profileVisits}`,
         `Website visits: ${input.funnel.websiteVisits}`,
-        `Signups: ${input.funnel.signups}`,
-        `Activated: ${input.funnel.activations}`,
-        `Paying: ${input.funnel.paid}`,
         `Responses posted: ${input.responsesPosted}`,
         "",
         "Per platform:",
-        ...input.perPlatform.map(
-          (p) => `  ${p.platform}: ${p.engagements} engagements, ${p.signups} signups`,
-        ),
+        ...input.perPlatform.map((p) => `  ${p.platform}: ${p.engagements} engagements`),
         "",
         `Their target topics: ${input.topTopics.join(", ")}`,
         "",
@@ -449,16 +504,14 @@ export class ClaudeAIProvider implements AIProvider {
         "You interpret the result of a small acquisition experiment for an early-stage SaaS founder. " +
         `The diagnosed bottleneck is ${bottleneck}; do not contradict it. ` +
         "Be honest about sample size — small numbers are directional, not conclusive. " +
-        "nextExperiment: one specific, runnable next test.",
+        "nextExperiment: one specific, runnable next test. " +
+        "There is no data linking a specific conversation to a specific signup or sale — never claim or imply that one.",
       prompt: [
         `Hypothesis: ${input.hypothesis}`,
         `Action taken: ${input.action}`,
         `Target conversations: ${input.targetConversations} (${hitTarget ? "met" : "not met"})`,
         `Conversations: ${input.conversations}`,
         `Website visits: ${input.websiteVisits}`,
-        `Signups: ${input.signups}`,
-        `Activated: ${input.activatedUsers}`,
-        `Paying: ${input.paidUsers}`,
         "",
         `Rule-based diagnosis: ${bottleneck}. Reference: ${explanation}`,
       ].join("\n"),

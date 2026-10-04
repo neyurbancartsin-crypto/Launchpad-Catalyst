@@ -1,6 +1,9 @@
 import type { ICP, SaaSProject } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { syncOpportunities, type SyncSummary } from "@/lib/discovery";
+import { createNotificationsForNewOpportunities } from "@/lib/notifications";
+import { generateFreshQueries } from "@/lib/search/generate-discovery-queries";
+export { MANUAL_DISCOVERY_COOLDOWN_HOURS, manualDiscoveryAvailableAt } from "@/lib/discovery-cooldown";
 
 /**
  * Shared entry point for every discovery trigger — onboarding's first sync,
@@ -83,6 +86,7 @@ async function recordDiscoveryRun(
   runStartedAt: Date,
   summary: SyncSummary,
   isAuto: boolean,
+  queriesUsed: string[],
 ): Promise<void> {
   const errorSummary = formatSyncFailures(summary.perPlatform);
   const now = new Date();
@@ -106,6 +110,9 @@ async function recordDiscoveryRun(
         updatedCount: summary.updated,
         errorSummary,
         isAuto,
+        // Read back by `generateFreshQueries` on the next cycle so query
+        // generation can favor genuinely different angles over these.
+        queriesUsed,
       },
     }),
   ]);
@@ -133,8 +140,24 @@ export async function runDiscoverySync(
 
   const runStartedAt = new Date();
   try {
-    const summary = await syncOpportunities(project, icp);
-    await recordDiscoveryRun(project.id, runStartedAt, summary, options.isAuto);
+    // One AI call for this cycle's search angles — reuses the ICP already
+    // stored on this project rather than regenerating the business
+    // understanding (see generateFreshQueries' own docs). Applies to every
+    // caller alike (onboarding, manual refresh, cron) so repeated automatic
+    // cycles get the same freshness as a manual one.
+    const freshQueries = await generateFreshQueries(project, icp);
+    const summary = await syncOpportunities(project, icp, { freshQueries });
+    await recordDiscoveryRun(project.id, runStartedAt, summary, options.isAuto, freshQueries);
+    // Only the automatic cron notifies — a founder who just clicked "Find
+    // New Opportunities" (or is finishing onboarding) is already looking at
+    // the results, so notifying them too would just be noise.
+    if (options.isAuto) {
+      await createNotificationsForNewOpportunities(
+        project.userId,
+        project.id,
+        summary.newOpportunityIds,
+      );
+    }
     return { ran: true, summary };
   } finally {
     // Always released, even if syncOpportunities/recordDiscoveryRun throws —

@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// Experiments/Tracking/Reports are deliberately not linked here for the
+// current MVP — their routes, data and actions are untouched and still
+// reachable directly, just not part of the primary nav (see the redesign
+// brief: keep the core Dashboard -> Opportunities -> Strategy loop visible,
+// hide the rest rather than removing it).
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/opportunities", label: "Opportunities" },
   { href: "/strategy", label: "Strategy" },
-  { href: "/experiments", label: "Experiments" },
-  { href: "/tracking", label: "Tracking" },
-  { href: "/reports", label: "Reports" },
   { href: "/settings", label: "Settings" },
 ];
 

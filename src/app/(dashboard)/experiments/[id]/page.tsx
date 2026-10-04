@@ -82,10 +82,12 @@ export default async function ExperimentDetailPage({
         </Card>
 
         {result ? (
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          // Signups excluded — self-logged here with no link back to a
+          // specific conversation, so displaying it next to Catalyst's own
+          // discovery numbers would imply an attribution that doesn't exist.
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile label="Conversations" value={result.conversations} />
             <StatTile label="Website visits" value={result.websiteVisits} />
-            <StatTile label="Signups" value={result.signups} />
             <StatTile label="Activated" value={result.activatedUsers} />
             <StatTile label="Paid" value={result.paidUsers} />
           </div>

@@ -21,13 +21,13 @@ function Messages({ state }: { state: AuthFormState }) {
       {state.error ? (
         <p
           role="alert"
-          className="rounded-lg border border-[#f0c4c1] bg-danger-soft px-3 py-2 text-sm text-danger"
+          className="rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger"
         >
           {state.error}
         </p>
       ) : null}
       {state.notice ? (
-        <p className="rounded-lg border border-[#bde3d1] bg-success-soft px-3 py-2 text-sm text-success">
+        <p className="rounded-lg border border-success-border bg-success-soft px-3 py-2 text-sm text-success">
           {state.notice}
         </p>
       ) : null}

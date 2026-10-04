@@ -93,10 +93,12 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  accounts     Account[]
-  sessions     Session[]
-  saasProjects SaaSProject[]
-  authTokens   AuthToken[]
+  accounts      Account[]
+  sessions      Session[]
+  saasProjects  SaaSProject[]
+  authTokens    AuthToken[]
+  notifications Notification[]
+  feedback      Feedback[]
 }
 
 model Account {
@@ -178,6 +180,9 @@ model SaaSProject {
   description      String  @db.Text
   problemSolved    String  @db.Text
   targetCustomer   String  @db.Text
+  /// Optional: "What are the main use cases of your product?" — nullable so
+  /// projects onboarded before this field existed keep working unchanged.
+  useCases         String? @db.Text
   category         String
   pricing          String? // never asked for; not reliably inferable either
   currentUsers     Int     @default(0)
@@ -227,6 +232,7 @@ model SaaSProject {
   reports        GrowthReport[]
   pageAudits     LandingPageAudit[]
   discoveryRuns  DiscoveryRun[]
+  notifications  Notification[]
 
   @@index([userId])
 }
@@ -247,6 +253,11 @@ model DiscoveryRun {
   errorSummary String?  @db.Text
   /// True when the cron triggered this run rather than a founder's manual click.
   isAuto       Boolean  @default(false)
+  /// The AI-generated search-angle phrases used for this cycle's retrieval
+  /// (not scoring — see discovery.ts). Read back on the next cycle so query
+  /// generation can favor genuinely different angles instead of repeating
+  /// itself. Bounded to one small array per run, not an ever-growing log.
+  queriesUsed  String[] @default([])
 
   @@index([projectId, runAt])
 }
@@ -288,6 +299,14 @@ model ICP {
   keywordSynonyms  Json     @default("[]")
   /// Phrases that should exclude a conversation even if it matches positively elsewhere.
   negativeKeywords String[] @default([])
+  /// Concrete things the product actually does — what a conversation should
+  /// describe to be a genuine fit. Additive; empty on older projects.
+  supportedUseCases   String[] @default([])
+  /// Things the product explicitly does NOT do, named only when the AI (or
+  /// the founder) is reasonably confident — never guessed. Used to stop a
+  /// conversation asking for an unsupported capability from being scored as
+  /// if the product could solve it. Additive; empty on older projects.
+  unsupportedUseCases String[] @default([])
 
   editedByUser Boolean  @default(false)
   createdAt    DateTime @default(now())
@@ -382,10 +401,32 @@ model Opportunity {
   conversation Conversation?
   responses    Response[]
   engagements  Engagement[]
+  notification Notification?
 
   @@unique([projectId, platform, externalPostId])
   @@index([projectId, opportunityScore])
   @@index([projectId, status])
+}
+
+/// One row per genuinely new opportunity found by an *automatic* discovery
+/// run — manual "Find New Opportunities" and onboarding's first sync don't
+/// create these, since the founder is already looking at the results. The
+/// unique `opportunityId` is the dedup guarantee: at most one notification
+/// can ever exist per opportunity, enforced at the database level regardless
+/// of cron retries, overlapping invocations, or any application-level race.
+model Notification {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId     String
+  project       SaaSProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  opportunityId String      @unique
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, projectId, read])
 }
 
 model Conversation {
@@ -513,4 +554,47 @@ model LandingPageAudit {
   createdAt DateTime @default(now())
 
   @@index([projectId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Feedback
+// ---------------------------------------------------------------------------
+
+enum FeedbackType {
+  SUGGESTION
+  FEATURE_REQUEST
+  BUG_REPORT
+  OTHER
+}
+
+enum FeedbackStatus {
+  NEW
+  REVIEWED
+  PLANNED
+  DONE
+}
+
+/// Submitted from the authenticated dashboard's "Give Feedback" form.
+/// `userId` is nullable (set null rather than cascading a delete) so a
+/// founder's past feedback survives even if their account is later removed —
+/// the message itself is still useful product input.
+model Feedback {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  name    String
+  email   String
+  type    FeedbackType
+  message String       @db.Text
+  /// Consent to be contacted about future product updates/launch — defaults
+  /// to false; the checkbox is opt-in and unchecked by default in the form.
+  consent Boolean      @default(false)
+  status  FeedbackStatus @default(NEW)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([consent])
 }

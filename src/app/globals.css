@@ -1,49 +1,146 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f6f7f9;
-  --surface: #ffffff;
-  --surface-muted: #f2f4f7;
-  --foreground: #16181d;
-  --muted: #626875;
-  --border: #e2e5ea;
+  /* -------------------------------------------------------------------
+   * Catalyst brand primitives — the one place the three brand colors are
+   * defined. Both the landing page and the authenticated product build
+   * their semantic tokens from these, so the two can never drift apart.
+   * ------------------------------------------------------------------- */
+  --catalyst-white: #ffffff;
+  --catalyst-off-white: #fafafa;
+  --catalyst-ink: #111111;
+  --catalyst-ink-soft: #1a1a1a;
+  --catalyst-muted: #5b5f66;
+  --catalyst-border: #e7e7e5;
+  --catalyst-lime: #b8ff00;
+  --catalyst-lime-soft: #f3ffd9;
+  --catalyst-lime-border: #ddf29a;
 
-  --brand: #2f5fe0;
-  --brand-foreground: #ffffff;
-  --brand-soft: #eaf0ff;
+  /* -------------------------------------------------------------------
+   * Authenticated product tokens.
+   *
+   * Names are unchanged from before this theme (`--brand`, `--brand-soft`,
+   * `--surface-muted`, etc.) so every existing `bg-brand`/`text-brand`/
+   * `bg-brand-soft` class across the app re-themes automatically — only the
+   * *values* moved from blue to the Catalyst palette. New tokens
+   * (`--accent*`, `--opportunity*`) are additive, for the opportunity
+   * visual language and anything built going forward.
+   * ------------------------------------------------------------------- */
+  --background: var(--catalyst-off-white);
+  --surface: var(--catalyst-white);
+  --surface-elevated: var(--catalyst-white);
+  --surface-muted: #f2f4f7;
+  --foreground: var(--catalyst-ink);
+  --muted: var(--catalyst-muted);
+  --border: var(--catalyst-border);
+
+  /* Primary action color: near-black, not lime — lime is reserved as a
+     signal/accent (see --accent, --opportunity below), never a flood color. */
+  --brand: var(--catalyst-ink);
+  --brand-foreground: var(--catalyst-white);
+  --brand-hover: var(--catalyst-ink-soft);
+  --brand-disabled: #9a9a9a;
+  /* The soft/selected-state tint — this is where lime actually shows up in
+     the UI (active nav item, selected pill, notification badge, etc.). */
+  --brand-soft: var(--catalyst-lime-soft);
+  --brand-border: var(--catalyst-lime-border);
+
+  --accent: var(--catalyst-lime);
+  --accent-foreground: var(--catalyst-ink);
+  --accent-soft: var(--catalyst-lime-soft);
+  --accent-border: var(--catalyst-lime-border);
+
+  /* The "opportunity" signal — same raw lime as --accent, named separately
+     so opportunity-scoring UI (ScoreBadge/TierBadge) reads with intent
+     rather than reusing a generic accent token. */
+  --opportunity: var(--catalyst-lime);
+  --opportunity-foreground: var(--catalyst-ink);
+  --opportunity-soft: var(--catalyst-lime-soft);
+  --opportunity-border: var(--catalyst-lime-border);
 
   --success: #12784f;
   --success-soft: #e6f5ee;
+  --success-border: #bde3d1;
   --warning: #9a5b00;
   --warning-soft: #fdf1dc;
+  --warning-border: #f2d8a8;
   --danger: #b3261e;
   --danger-soft: #fdeceb;
+  --danger-border: #f0c4c1;
   --demo: #8a5a00;
   --demo-soft: #fdf3d9;
   --demo-border: #f0d79a;
+
+  /* -------------------------------------------------------------------
+   * Landing-page-specific aliases. Kept as their own names (`--landing-*`)
+   * because the landing page needs an always-dark-or-light-section model
+   * the authenticated product doesn't, but every value below is the exact
+   * same Catalyst primitive the dashboard uses above — one visual identity,
+   * two sets of names for two different layout needs.
+   * ------------------------------------------------------------------- */
+  --landing-bg: var(--catalyst-white);
+  --landing-surface: var(--catalyst-off-white);
+  --landing-ink: var(--catalyst-ink);
+  --landing-ink-soft: var(--catalyst-ink-soft);
+  --landing-on-ink: var(--catalyst-white);
+  --landing-on-ink-muted: #9a9a9a;
+  --landing-muted: var(--catalyst-muted);
+  --landing-border: var(--catalyst-border);
+  --landing-border-on-ink: #2a2a2a;
+  --landing-lime: var(--catalyst-lime);
+  --landing-lime-ink: var(--catalyst-ink);
+  --landing-lime-soft: var(--catalyst-lime-soft);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
   --color-surface-muted: var(--surface-muted);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-disabled: var(--brand-disabled);
   --color-brand-soft: var(--brand-soft);
+  --color-brand-border: var(--brand-border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-border: var(--accent-border);
+  --color-opportunity: var(--opportunity);
+  --color-opportunity-foreground: var(--opportunity-foreground);
+  --color-opportunity-soft: var(--opportunity-soft);
+  --color-opportunity-border: var(--opportunity-border);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-danger-border: var(--danger-border);
   --color-demo: var(--demo);
   --color-demo-soft: var(--demo-soft);
   --color-demo-border: var(--demo-border);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-landing-bg: var(--landing-bg);
+  --color-landing-surface: var(--landing-surface);
+  --color-landing-ink: var(--landing-ink);
+  --color-landing-ink-soft: var(--landing-ink-soft);
+  --color-landing-on-ink: var(--landing-on-ink);
+  --color-landing-on-ink-muted: var(--landing-on-ink-muted);
+  --color-landing-muted: var(--landing-muted);
+  --color-landing-border: var(--landing-border);
+  --color-landing-border-on-ink: var(--landing-border-on-ink);
+  --color-landing-lime: var(--landing-lime);
+  --color-landing-lime-ink: var(--landing-lime-ink);
+  --color-landing-lime-soft: var(--landing-lime-soft);
 }
 
 body {
@@ -58,4 +155,190 @@ body {
 :focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
+}
+
+/* The landing page has no blue in its palette — its own focus ring uses the
+   near-black/lime identity instead of the dashboard's blue brand color. */
+.landing-root :focus-visible {
+  outline-color: var(--landing-ink);
+}
+.landing-root [data-tone="dark"] :focus-visible {
+  outline-color: var(--landing-lime);
+}
+
+/* -------------------------------------------------------------------
+ * Hero "conversation intelligence map" animation primitives.
+ * Pure CSS (no WebGL/animation library) — see hero-visual.tsx.
+ * ------------------------------------------------------------------- */
+/* Centering (-50%/-50%) is baked into these keyframes rather than left to a
+   separate `translate-x/y-1/2` utility class: a running CSS animation
+   replaces the whole `transform` value for its duration, so a centering
+   transform set via a class (or inline style) on the same element would
+   otherwise be silently dropped the moment the animation starts. */
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate(-50%, -50%) translate3d(0, -10px, 0) rotate(1.5deg);
+  }
+}
+
+/* Same motion as landing-float, without the centering translate — for
+   elements (like the hero's floating cards) positioned by a parent wrapper
+   rather than by self-centering on a top/left point. */
+@keyframes landing-bob {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0) rotate(1.5deg);
+  }
+}
+
+@keyframes landing-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+}
+
+@keyframes landing-radar {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes landing-drift {
+  0%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dashoffset: 6;
+  }
+}
+
+@keyframes landing-orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes landing-orbit-spin-reverse {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+/* A short bright dash traveling the length of a connection path — the
+   "signal" moving from a conversation toward the Catalyst core. */
+@keyframes landing-signal {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes landing-core-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(184, 255, 0, 0),
+      0 30px 70px rgba(17, 17, 17, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 48px 10px rgba(184, 255, 0, 0.22),
+      0 30px 70px rgba(17, 17, 17, 0.35);
+  }
+}
+
+.landing-animate-float {
+  animation: landing-float var(--landing-float-duration, 7s) ease-in-out infinite;
+  animation-delay: var(--landing-float-delay, 0s);
+}
+
+.landing-animate-bob {
+  animation: landing-bob var(--landing-float-duration, 7s) ease-in-out infinite;
+  animation-delay: var(--landing-float-delay, 0s);
+}
+
+.landing-animate-pulse {
+  animation: landing-pulse var(--landing-pulse-duration, 3.2s) ease-in-out infinite;
+  animation-delay: var(--landing-float-delay, 0s);
+}
+
+.landing-animate-radar {
+  animation: landing-radar var(--landing-radar-duration, 4.5s) cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation-delay: var(--landing-radar-delay, 0s);
+}
+
+.landing-animate-drift {
+  animation: landing-drift 6s ease-in-out infinite;
+}
+
+.landing-animate-orbit {
+  animation: landing-orbit-spin var(--landing-orbit-duration, 70s) linear infinite;
+  transform-origin: center;
+}
+
+.landing-animate-orbit-reverse {
+  animation: landing-orbit-spin-reverse var(--landing-orbit-duration, 90s) linear infinite;
+  transform-origin: center;
+}
+
+/* Paired with the SVG `pathLength={1}` attribute on the element, so
+   stroke-dasharray/dashoffset below are simple 0–1 fractions of the path
+   regardless of its actual geometry. */
+.landing-animate-signal {
+  stroke-dasharray: 1;
+  animation: landing-signal var(--landing-signal-duration, 3.5s) ease-in-out infinite;
+  animation-delay: var(--landing-signal-delay, 0s);
+}
+
+.landing-animate-core-glow {
+  animation: landing-core-glow 6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-animate-float,
+  .landing-animate-bob,
+  .landing-animate-pulse,
+  .landing-animate-radar,
+  .landing-animate-drift,
+  .landing-animate-orbit,
+  .landing-animate-orbit-reverse,
+  .landing-animate-signal,
+  .landing-animate-core-glow {
+    animation: none;
+  }
 }

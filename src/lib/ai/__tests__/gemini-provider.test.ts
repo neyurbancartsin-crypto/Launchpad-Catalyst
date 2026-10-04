@@ -135,6 +135,7 @@ describe("GeminiAIProvider - reduced AI usage", () => {
       intentSignals: ["how do i"],
       productCategory: "Developer tools",
       competitors: [],
+      unsupportedUseCases: [],
     });
 
     expect(mockGenerateContent).not.toHaveBeenCalled();
@@ -166,6 +167,8 @@ describe("GeminiAIProvider - reduced AI usage", () => {
         positiveKeywords: ["unpaid invoice"],
         keywordSynonyms: [{ keyword: "unpaid invoice", synonyms: ["overdue invoice"] }],
         negativeKeywords: ["hiring"],
+        supportedUseCases: ["testing dead pixels"],
+        unsupportedUseCases: [],
         channels: [
           {
             platform: "GITHUB",
@@ -280,6 +283,8 @@ describe("GeminiAIProvider - structured output / schema validation", () => {
         positiveKeywords: ["unpaid invoice"],
         keywordSynonyms: [{ keyword: "unpaid invoice", synonyms: ["overdue invoice"] }],
         negativeKeywords: ["hiring"],
+        supportedUseCases: ["testing dead pixels"],
+        unsupportedUseCases: [],
         channels: [
           {
             // Human label instead of the exact platform code.

@@ -19,6 +19,8 @@ export interface SaaSIntake {
   problemSolved: string;
   targetCustomer?: string | null;
   website?: string | null;
+  /** Optional: "What are the main use cases of your product?" */
+  useCases?: string | null;
 }
 
 export interface ProblemMapEntry {
@@ -67,6 +69,22 @@ export interface SaaSAnalysis {
   keywordSynonyms: KeywordSynonymEntry[];
   /** Phrases that should exclude a conversation even if it matches positively elsewhere. */
   negativeKeywords: string[];
+
+  /**
+   * Concrete things the product actually does, in the founder's/customer's
+   * own words (e.g. "spot a dead or stuck pixel on a monitor") — used to
+   * widen query generation and as the positive counterpart to
+   * `unsupportedUseCases` below.
+   */
+  supportedUseCases: string[];
+  /**
+   * Things the product explicitly does NOT do that someone might otherwise
+   * confuse it for (e.g. "physically repairing a cracked screen" for a
+   * pixel-testing tool). Only ever populated when genuinely confident — an
+   * empty array means "no known false-positive capability traps", never
+   * "this product does everything".
+   */
+  unsupportedUseCases: string[];
 }
 
 export interface SaaSAnalysisWithChannels {
@@ -110,6 +128,39 @@ export interface ConversationAnalysisInput {
   intentSignals: string[];
 }
 
+// --- Discovery Query Generator ----------------------------------------------
+
+/**
+ * One business-understanding-aware call, run once per discovery cycle
+ * (reusing the already-stored ICP rather than regenerating it), producing a
+ * fresh batch of diverse search-angle phrases. Deliberately separate from
+ * `SaaSAnalysis`: this never touches the business understanding itself, only
+ * proposes *how to search for it* this cycle. Never fed into scoring —
+ * `OpportunityScoringInput.icpKeywords`/`problemKeywords` stay independent
+ * (see discovery.ts) so query freshness can never move an existing score.
+ */
+export interface DiscoveryQueryGenerationInput {
+  productSummary: string;
+  coreProblem: string;
+  primaryCustomer: string;
+  painPoints: string[];
+  problemMap: ProblemMapEntry[];
+  supportedUseCases: string[];
+  positiveKeywords: string[];
+  searchTopics: string[];
+  /**
+   * Queries already used in recent discovery cycles for this project — the
+   * new batch should favor genuinely different angles/phrasing over these,
+   * not just prepend/append minor variants of them.
+   */
+  recentQueries: string[];
+}
+
+export interface DiscoveryQueryGenerationResult {
+  /** Diverse, natural-language search phrases — not a fixed-template list. */
+  queries: string[];
+}
+
 // --- Opportunity Scorer (PRD s15-17) ---------------------------------------
 
 export interface OpportunityScoringInput {
@@ -127,6 +178,8 @@ export interface OpportunityScoringInput {
   intentSignals: string[];
   productCategory: string;
   competitors: string[];
+  /** Phrases describing capabilities the product explicitly does not have (may be empty). */
+  unsupportedUseCases: string[];
 }
 
 export interface OpportunityAssessment {
@@ -268,6 +321,16 @@ export interface AIProvider {
    * recommendations together.
    */
   analyzeSaaSWithChannels(input: SaaSIntake): Promise<SaaSAnalysisWithChannels>;
+  /**
+   * One call per discovery cycle, reusing the already-stored ICP rather than
+   * regenerating the business understanding — produces a fresh batch of
+   * diverse search-angle phrases so repeated discovery cycles can surface
+   * different conversations over time. Purely a retrieval concern: its
+   * output never reaches scoring.
+   */
+  generateDiscoveryQueries(
+    input: DiscoveryQueryGenerationInput,
+  ): Promise<DiscoveryQueryGenerationResult>;
   analyzeConversation(
     input: ConversationAnalysisInput,
   ): Promise<CommentAnalysis[]>;

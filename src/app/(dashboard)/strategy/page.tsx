@@ -62,6 +62,8 @@ export default async function StrategyPage() {
             objections: icp.objections,
             searchTopics: icp.searchTopics,
             intentSignals: icp.intentSignals,
+            supportedUseCases: icp.supportedUseCases,
+            unsupportedUseCases: icp.unsupportedUseCases,
           }}
         />
 

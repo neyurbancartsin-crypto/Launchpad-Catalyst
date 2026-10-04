@@ -190,6 +190,19 @@ export class HackerNewsAdapter implements PlatformAdapter {
     }
   }
 
+  /**
+   * The canonical "open in original" URL for an HN item. Deliberately never
+   * `hit.url`/`item.url` — the Algolia API returns that field for the
+   * EXTERNAL link a "link post" (e.g. a Show HN pointing at a product site)
+   * was submitted with, not the HN discussion itself. Using it as `PostDTO.url`
+   * means "Open in original" can silently leave Hacker News entirely and land
+   * on an unrelated third-party site. The discussion thread always lives at
+   * this fixed path regardless of whether the item also links elsewhere.
+   */
+  private static itemUrl(id: string | number): string {
+    return `https://news.ycombinator.com/item?id=${id}`;
+  }
+
   private toPostDTO(communityExternalId: string, hit: AlgoliaHit): PostDTO {
     return {
       externalId: hit.objectID,
@@ -197,7 +210,7 @@ export class HackerNewsAdapter implements PlatformAdapter {
       title: hit.title ?? "(untitled)",
       body: hit.story_text ?? "",
       author: hit.author ?? "unknown",
-      url: hit.url ?? `https://news.ycombinator.com/item?id=${hit.objectID}`,
+      url: HackerNewsAdapter.itemUrl(hit.objectID),
       upvotes: hit.points ?? 0,
       commentCount: hit.num_comments ?? 0,
       createdAt: new Date(hit.created_at),
@@ -212,7 +225,7 @@ export class HackerNewsAdapter implements PlatformAdapter {
       title: item.title ?? "(untitled)",
       body: item.text ?? "",
       author: item.author ?? "unknown",
-      url: item.url ?? `https://news.ycombinator.com/item?id=${item.id}`,
+      url: HackerNewsAdapter.itemUrl(item.id),
       upvotes: item.points ?? 0,
       commentCount: item.children?.length ?? 0,
       createdAt: new Date(item.created_at),

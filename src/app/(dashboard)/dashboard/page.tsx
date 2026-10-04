@@ -90,9 +90,12 @@ export default async function DashboardPage() {
     }),
   ]);
 
+  // SIGNUP is excluded: Catalyst has no trackable-link/attribution mechanism
+  // yet connecting a specific conversation to a specific signup, so showing
+  // it in a sequential "funnel" would misleadingly imply that link exists.
   const funnelStages = [
     { stage: "OPPORTUNITY" as const, count: opportunityCount },
-    ...stages.filter((s) => s.stage !== "OPPORTUNITY"),
+    ...stages.filter((s) => s.stage !== "OPPORTUNITY" && s.stage !== "SIGNUP"),
   ];
 
   const reportPayload = latestReport?.payload as unknown as
@@ -143,7 +146,7 @@ export default async function DashboardPage() {
                   <li key={mission.id}>
                     <Link
                       href={`/opportunities/${mission.id}`}
-                      className="flex gap-3 rounded-lg border border-border p-3 transition-colors hover:border-[#c4d3f7] hover:bg-brand-soft/30"
+                      className="flex gap-3 rounded-lg border border-border p-3 transition-colors hover:border-brand-border hover:bg-brand-soft/30"
                     >
                       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand">
                         {index + 1}

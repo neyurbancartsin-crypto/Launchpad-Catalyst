@@ -9,8 +9,10 @@ import { determineRecommendedAction } from "@/lib/scoring/recommended-action";
 import {
   computeComponents,
   computeOverallScore,
+  detectsUnsupportedCapability,
   keywordMatchScore,
   priorityBand,
+  topMatchedPhrase,
 } from "@/lib/scoring/opportunity-score";
 import {
   BASE_INTENT_SIGNALS,
@@ -22,6 +24,8 @@ import type {
   ChannelRecommendation,
   CommentAnalysis,
   ConversationAnalysisInput,
+  DiscoveryQueryGenerationInput,
+  DiscoveryQueryGenerationResult,
   ExperimentAnalysis,
   ExperimentAnalysisInput,
   GrowthAnalysis,
@@ -124,6 +128,71 @@ function deriveKeywordSynonyms(positiveKeywords: string[]): KeywordSynonymEntry[
  * it only ever offers generic noise exclusions rather than guessing.
  */
 const GENERIC_NEGATIVE_KEYWORDS = ["hiring", "job opening", "giveaway"];
+
+// --- Discovery query generation (demo engine) -------------------------------
+
+const MAX_MOCK_DISCOVERY_QUERIES = 12;
+
+/**
+ * Generic angle shapes the demo engine can apply to any existing ICP phrase
+ * — the same honesty as GENERIC_SYNONYMS above: a real AI provider writes
+ * genuinely new customer language from scratch, but the demo engine has no
+ * language model, so it can only recombine phrases already stored on the
+ * ICP into differently-shaped questions. Order matters — see the rotation
+ * in `generateDiscoveryQueries` below.
+ */
+const QUERY_ANGLE_TEMPLATES: ((phrase: string) => string)[] = [
+  (p) => p,
+  (p) => `how do i deal with ${p}`,
+  (p) => `is there a tool for ${p}`,
+  (p) => `${p} alternative`,
+  (p) => `struggling with ${p}`,
+  (p) => `anyone else dealing with ${p}`,
+  (p) => `workaround for ${p}`,
+  (p) => `recommendations for ${p}`,
+];
+
+/** Every distinct phrase already stored on the ICP that could seed a search query. */
+function discoveryQueryPool(input: DiscoveryQueryGenerationInput): string[] {
+  const phrases = [
+    ...input.positiveKeywords,
+    ...input.painPoints,
+    ...input.problemMap.map((entry) => entry.problem),
+    ...input.supportedUseCases,
+    ...input.searchTopics,
+  ];
+  const seen = new Set<string>();
+  const pool: string[] = [];
+  for (const phrase of phrases) {
+    const trimmed = phrase.trim();
+    const key = trimmed.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    pool.push(trimmed);
+  }
+  return pool;
+}
+
+/**
+ * Splits the founder's own "main use cases" answer into individual phrases —
+ * one per line, or one per sentence if they wrote it as prose. Used as-is
+ * (not generated) since this is the founder's own text, not an inference.
+ */
+function deriveSupportedUseCases(input: SaaSIntake, archetype: Archetype): string[] {
+  const raw = input.useCases?.trim();
+  if (raw) {
+    const lines = raw
+      .split(/\n+/)
+      .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (lines.length > 0) return lines.slice(0, 8);
+  }
+  // No use-cases answer given: fall back to the archetype's own search
+  // topics, which are already written as concrete scenarios rather than
+  // abstract categories — better than leaving this empty.
+  return archetype.searchTopics.slice(0, 5);
+}
 
 /** Consumer language must dominate and appear with no business language to read as B2C. */
 function inferBusinessModel(corpus: string): "B2B" | "B2C" | "B2B2C" {
@@ -294,6 +363,13 @@ export class MockAIProvider implements AIProvider {
       positiveKeywords,
       keywordSynonyms: deriveKeywordSynonyms(positiveKeywords),
       negativeKeywords: GENERIC_NEGATIVE_KEYWORDS,
+
+      supportedUseCases: deriveSupportedUseCases(input, archetype),
+      // The demo engine has no language model to reason about what this
+      // specific product does NOT do — guessing here would risk inventing a
+      // limitation that isn't real, which is worse than leaving it empty for
+      // the founder to fill in on /strategy.
+      unsupportedUseCases: [],
     };
 
     const isB2B = businessModel.startsWith("B2B");
@@ -312,6 +388,51 @@ export class MockAIProvider implements AIProvider {
     })).sort((a, b) => b.fitScore - a.fitScore);
 
     return { analysis, channels };
+  }
+
+  /**
+   * Deterministic stand-in for a real per-cycle query-generation call: no
+   * randomness, so repeated-discovery tests can assert on it directly (see
+   * Test 5). Diversity comes from two things, both derived only from the
+   * inputs already given: which angle template leads the batch rotates with
+   * how many queries have already been used (`recentQueries.length`), and
+   * any candidate already present in `recentQueries` is skipped. A real
+   * provider can write genuinely new phrasing; this can only recombine the
+   * ICP's own stored vocabulary — still enough to avoid literally repeating
+   * the same batch cycle after cycle.
+   */
+  async generateDiscoveryQueries(
+    input: DiscoveryQueryGenerationInput,
+  ): Promise<DiscoveryQueryGenerationResult> {
+    const pool = discoveryQueryPool(input);
+    if (pool.length === 0) return { queries: [] };
+
+    const usedBefore = new Set(input.recentQueries.map((q) => q.trim().toLowerCase()));
+    const rotation = input.recentQueries.length % QUERY_ANGLE_TEMPLATES.length;
+    const orderedTemplates = [
+      ...QUERY_ANGLE_TEMPLATES.slice(rotation),
+      ...QUERY_ANGLE_TEMPLATES.slice(0, rotation),
+    ];
+
+    const seen = new Set<string>();
+    const queries: string[] = [];
+    outer: for (const template of orderedTemplates) {
+      for (const phrase of pool) {
+        if (queries.length >= MAX_MOCK_DISCOVERY_QUERIES) break outer;
+        const candidate = template(phrase.toLowerCase());
+        const key = candidate.toLowerCase();
+        if (usedBefore.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        queries.push(candidate);
+      }
+    }
+
+    // Filtering against recent history can exhaust a small ICP's pool after
+    // enough cycles — fall back to the base phrases rather than returning
+    // nothing; a query repeating across cycles is acceptable (PRD note:
+    // diversity is best-effort), an empty batch breaking discovery is not.
+    if (queries.length === 0) return { queries: pool.slice(0, MAX_MOCK_DISCOVERY_QUERIES) };
+    return { queries };
   }
 
   async analyzeConversation(
@@ -388,6 +509,7 @@ export class MockAIProvider implements AIProvider {
       upvotes: input.upvotes,
       commentCount: input.commentCount,
       postedAt: input.postedAt,
+      unsupportedUseCases: input.unsupportedUseCases ?? [],
     });
 
     const opportunityScore = computeOverallScore(components);
@@ -395,6 +517,8 @@ export class MockAIProvider implements AIProvider {
 
     const asksForSolution = detectsSolutionRequest(text);
     const mentionsCompetitor = mentionsAnyCompetitor(text, input.competitors);
+    const unsupportedCapability = detectsUnsupportedCapability(text, input.unsupportedUseCases ?? []);
+    const matchedProblemPhrase = topMatchedPhrase(text, input.problemKeywords);
 
     const risk = assessPromotionRisk({
       intentScore: components.intentScore,
@@ -411,6 +535,8 @@ export class MockAIProvider implements AIProvider {
       intentScore: components.intentScore,
       problemScore: components.problemScore,
       asksForSolution,
+      matchedProblemPhrase,
+      unsupportedCapability,
     });
 
     return {
@@ -497,21 +623,25 @@ export class MockAIProvider implements AIProvider {
   async analyzeGrowth(input: GrowthAnalysisInput): Promise<GrowthAnalysis> {
     const { funnel } = input;
 
+    // Ranked by engagement, not signups: Catalyst has no attribution link
+    // from a specific conversation to a specific signup, so "best channel"
+    // must not be framed as "the channel that produced your signups".
     const bestPlatform = [...input.perPlatform].sort(
-      (a, b) => b.signups - a.signups || b.engagements - a.engagements,
+      (a, b) => b.engagements - a.engagements,
     )[0];
 
     const { bottleneck, explanation } = diagnoseBottleneck(funnel);
 
+    // Deliberately stops at website visits — signups/activations/paid are
+    // self-logged totals with no link back to a specific conversation, so
+    // saying a conversation count "produced" them would overclaim.
     const activitySummary = `Across this period you engaged in ${funnel.engagements} ${
       funnel.engagements === 1 ? "conversation" : "conversations"
     } from ${funnel.opportunities} discovered ${
       funnel.opportunities === 1 ? "opportunity" : "opportunities"
     }, which produced ${funnel.websiteVisits} website ${
       funnel.websiteVisits === 1 ? "visit" : "visits"
-    }, ${funnel.signups} ${funnel.signups === 1 ? "signup" : "signups"}, ${
-      funnel.activations
-    } activated and ${funnel.paid} paying.`;
+    }.`;
 
     return {
       activitySummary,
@@ -521,11 +651,9 @@ export class MockAIProvider implements AIProvider {
           : null,
       bestTopic: input.topTopics[0] ?? null,
       bestConversationType:
-        funnel.signups > 0
-          ? "Problem and intent discussions"
-          : funnel.engagements > 0
-            ? "Too early to tell — not enough converted conversations yet"
-            : null,
+        funnel.engagements > 0
+          ? "Too early to tell — not enough tracked activity yet"
+          : null,
       bottleneck,
       bottleneckExplanation: explanation,
       recommendation: recommendationFor(bottleneck),
@@ -550,6 +678,9 @@ export class MockAIProvider implements AIProvider {
       paid: input.paidUsers,
     });
 
+    // Stops at website visits for the same reason as analyzeGrowth's
+    // activitySummary — signups/activated/paid are self-logged totals with
+    // no attribution link back to these specific conversations.
     const whatHappened = `You held ${input.conversations} ${
       input.conversations === 1 ? "conversation" : "conversations"
     }${
@@ -558,9 +689,7 @@ export class MockAIProvider implements AIProvider {
         : ""
     }. Those produced ${input.websiteVisits} website ${
       input.websiteVisits === 1 ? "visit" : "visits"
-    }, ${input.signups} ${input.signups === 1 ? "signup" : "signups"}, ${
-      input.activatedUsers
-    } activated and ${input.paidUsers} paying.`;
+    }.`;
 
     return {
       whatHappened,

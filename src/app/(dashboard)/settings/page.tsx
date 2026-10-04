@@ -231,7 +231,7 @@ export default async function SettingsPage() {
               Danger Zone
             </h2>
 
-            <Card className="border-[#f0c4c1]">
+            <Card className="border-danger-border">
               <CardHeader
                 title="Delete this project"
                 description="Permanent. Only you can delete your own projects."

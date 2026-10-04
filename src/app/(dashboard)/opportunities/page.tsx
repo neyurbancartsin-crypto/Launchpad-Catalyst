@@ -2,7 +2,6 @@ import Link from "next/link";
 import type { Platform, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireProject } from "@/lib/project";
-import { refreshOpportunitiesAction } from "@/actions/saas-project.actions";
 import {
   getLivePlatforms,
   PLATFORM_LABELS,
@@ -12,31 +11,43 @@ import { Button, Card, EmptyState, PageHeader } from "@/components/ui";
 import { DemoBanner } from "@/components/ui/demo-badge";
 import { DiscoveryPanel } from "@/components/opportunities/discovery-panel";
 import { OpportunityCard } from "@/components/opportunities/opportunity-card";
-import { FindOpportunitiesButton } from "@/components/opportunities/find-opportunities-button";
+import { DiscoveryProgress } from "@/components/opportunities/discovery-progress";
 
 export const metadata = { title: "Opportunities · Launchpad Catalyst" };
 
 /**
- * Phase 7: one primary "view" (what kind of opportunity to see) instead of a
- * pile of independent filters — Recommended is the default, everything else
- * is one click away. Platform and sort stay as light secondary controls.
+ * One primary "view" (what kind of opportunity to see) instead of a pile of
+ * independent filters.
+ *
+ * Visibility fix: every discovered, non-dismissed opportunity must be
+ * reachable somewhere, not just the ones that cleared the Recommended bar.
+ * "All Opportunities" is the obvious, no-filter view (and the default — see
+ * `parseView` — since most of what discovery finds doesn't score
+ * HIGH/REVIEW, and landing on an often-empty "Recommended" page reads as
+ * "nothing was found" even when plenty was). "Relevant" now covers both LOW
+ * and DEPRIORITISE bands — both are still "relevant" under the EXISTING
+ * four-tier scoring (DEPRIORITISE already carries the founder-facing label
+ * "Low Relevance" in `OPPORTUNITY_TIER` below, it was just excluded from
+ * this tab's filter before). This only widens which existing priorityBand
+ * values a tab's `where` matches — no score, threshold, or recommendation
+ * logic changes anywhere.
  */
 const VIEWS = {
+  all: { label: "All Opportunities", where: { status: { not: "IGNORED" } } },
   recommended: {
     label: "Recommended",
     where: { priorityBand: { in: ["HIGH", "REVIEW"] }, status: { not: "IGNORED" } },
+  },
+  relevant: {
+    label: "Relevant",
+    where: { priorityBand: { in: ["LOW", "DEPRIORITISE"] }, status: { not: "IGNORED" } },
   },
   high: {
     label: "High Opportunity",
     where: { priorityBand: "HIGH", status: { not: "IGNORED" } },
   },
-  relevant: {
-    label: "Relevant",
-    where: { priorityBand: "LOW", status: { not: "IGNORED" } },
-  },
   saved: { label: "Saved", where: { status: "SAVED" } },
   dismissed: { label: "Dismissed", where: { status: "IGNORED" } },
-  all: { label: "All", where: {} },
 } as const satisfies Record<string, { label: string; where: Prisma.OpportunityWhereInput }>;
 
 type ViewKey = keyof typeof VIEWS;
@@ -62,6 +73,7 @@ export default async function OpportunitiesPage({
   const platform = single(params.platform) as Platform | undefined;
   const view = parseView(single(params.view));
   const sort = parseSort(single(params.sort));
+  const take = parseTake(single(params.take));
 
   // An explicit platform choice is always honoured, including a mock one —
   // a founder can still deliberately preview demo content for a platform
@@ -83,34 +95,43 @@ export default async function OpportunitiesPage({
     ...VIEWS[view].where,
   };
 
-  const [opportunities, total, latestRun, recentRuns, lastAutoRun] = await Promise.all([
-    prisma.opportunity.findMany({
-      where,
-      orderBy:
-        sort === "recent"
-          ? { postedAt: "desc" }
-          : sort === "engagement"
-            ? [{ engagementScore: "desc" }, { opportunityScore: "desc" }]
-            : [{ opportunityScore: "desc" }, { postedAt: "desc" }],
-      take: 100,
-    }),
-    prisma.opportunity.count({ where: { projectId: project.id, ...platformScope } }),
-    prisma.discoveryRun.findFirst({
-      where: { projectId: project.id },
-      orderBy: { runAt: "desc" },
-    }),
-    prisma.discoveryRun.findMany({
-      where: { projectId: project.id },
-      orderBy: { runAt: "desc" },
-      take: 4,
-      select: { id: true, runAt: true, newCount: true, updatedCount: true },
-    }),
-    prisma.discoveryRun.findFirst({
-      where: { projectId: project.id, isAuto: true },
-      orderBy: { runAt: "desc" },
-      select: { newCount: true },
-    }),
-  ]);
+  const [opportunities, viewTotal, grandTotal, latestRun, recentRuns, lastAutoRun] =
+    await Promise.all([
+      prisma.opportunity.findMany({
+        where,
+        orderBy:
+          sort === "recent"
+            ? { postedAt: "desc" }
+            : sort === "engagement"
+              ? [{ engagementScore: "desc" }, { opportunityScore: "desc" }]
+              : [{ opportunityScore: "desc" }, { postedAt: "desc" }],
+        take,
+      }),
+      // Scoped to the current view — drives "Showing X of Y" and whether a
+      // "Load more" is offered. A fixed `take` alone would silently hide
+      // anything past the cap with no way to reach it (verified against real
+      // data: a project with 200+ discovered opportunities was losing results
+      // past the old fixed take:100 with no way to see the rest).
+      prisma.opportunity.count({ where }),
+      // Unscoped by view — distinguishes "nothing discovered at all yet" from
+      // "nothing matches this particular view" for the empty-state message below.
+      prisma.opportunity.count({ where: { projectId: project.id, ...platformScope } }),
+      prisma.discoveryRun.findFirst({
+        where: { projectId: project.id },
+        orderBy: { runAt: "desc" },
+      }),
+      prisma.discoveryRun.findMany({
+        where: { projectId: project.id },
+        orderBy: { runAt: "desc" },
+        take: 4,
+        select: { id: true, runAt: true, newCount: true, updatedCount: true },
+      }),
+      prisma.discoveryRun.findFirst({
+        where: { projectId: project.id, isAuto: true },
+        orderBy: { runAt: "desc" },
+        select: { newCount: true },
+      }),
+    ]);
 
   const anyDemo = opportunities.some((o) => o.isDemoData);
 
@@ -134,7 +155,7 @@ export default async function OpportunitiesPage({
       {project.lastSyncError ? (
         <div
           role="alert"
-          className="mb-6 rounded-xl border border-[#f0c4c1] bg-danger-soft px-4 py-3"
+          className="mb-6 rounded-xl border border-danger-border bg-danger-soft px-4 py-3"
         >
           <p className="text-sm font-medium text-danger">
             Some platforms had a problem on the last run
@@ -159,7 +180,7 @@ export default async function OpportunitiesPage({
               href={`/opportunities?${buildQuery({ view: key, platform, sort })}`}
               className={`rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
                 view === key
-                  ? "border-[#c4d3f7] bg-brand-soft text-brand"
+                  ? "border-brand-border bg-brand-soft text-foreground"
                   : "border-border text-muted hover:bg-surface-muted"
               }`}
             >
@@ -201,22 +222,20 @@ export default async function OpportunitiesPage({
 
       {opportunities.length === 0 ? (
         <EmptyState
-          title={total === 0 ? "No opportunities yet" : "No new opportunities yet"}
+          title={grandTotal === 0 ? "No opportunities yet" : "No new opportunities yet"}
           description={
-            total === 0
+            grandTotal === 0
               ? "Run discovery to find conversations that match your ideal customer profile."
               : view === "recommended"
-                ? "We couldn't find new conversations matching your product right now. Try again later, or check other views below."
+                ? "Nothing has cleared the Recommended bar yet — check All Opportunities or Relevant to see everything discovery found."
                 : "Nothing matches this view yet."
           }
           action={
-            total === 0 ? (
-              <form action={refreshOpportunitiesAction}>
-                <FindOpportunitiesButton />
-              </form>
+            grandTotal === 0 ? (
+              <DiscoveryProgress lastSyncedAt={project.lastSyncedAt} />
             ) : (
-              <Link href="/opportunities">
-                <Button variant="secondary">Back to Recommended</Button>
+              <Link href="/opportunities?view=all">
+                <Button variant="secondary">See All Opportunities</Button>
               </Link>
             )
           }
@@ -224,7 +243,7 @@ export default async function OpportunitiesPage({
       ) : (
         <>
           <p className="mb-3 text-sm text-muted">
-            Showing {opportunities.length} of {total}
+            Showing {opportunities.length} of {viewTotal}
           </p>
           <ul className="space-y-3">
             {opportunities.map((opportunity) => (
@@ -235,6 +254,15 @@ export default async function OpportunitiesPage({
               />
             ))}
           </ul>
+          {opportunities.length < viewTotal ? (
+            <div className="mt-4 flex justify-center">
+              <Link href={`/opportunities?${buildQuery({ view, platform, sort, take: String(take + TAKE_STEP) })}`}>
+                <Button variant="secondary">
+                  Load more ({viewTotal - opportunities.length} remaining)
+                </Button>
+              </Link>
+            </div>
+          ) : null}
         </>
       )}
     </>
@@ -274,12 +302,27 @@ function single(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+// Visibility fix: land on the view that always shows everything discovery
+// found, not the one most likely to be empty — most discovered conversations
+// don't clear the Recommended bar (that's expected, not a bug), so defaulting
+// there made a successful discovery run look like it found nothing.
 function parseView(value: string | undefined): ViewKey {
-  return value && value in VIEWS ? (value as ViewKey) : "recommended";
+  return value && value in VIEWS ? (value as ViewKey) : "all";
 }
 
 function parseSort(value: string | undefined): SortKey {
   return value && value in SORTS ? (value as SortKey) : "score";
+}
+
+const TAKE_DEFAULT = 50;
+const TAKE_STEP = 50;
+const TAKE_MAX = 500;
+
+/** Bounded so a crafted URL can't force an unbounded query. */
+function parseTake(value: string | undefined): number {
+  const n = value ? Number(value) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return TAKE_DEFAULT;
+  return Math.min(Math.round(n), TAKE_MAX);
 }
 
 function buildQuery(params: Record<string, string | undefined>): string {

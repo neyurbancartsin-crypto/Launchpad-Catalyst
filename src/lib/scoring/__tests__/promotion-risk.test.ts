@@ -177,4 +177,58 @@ describe("determineRecommendedAction", () => {
     });
     expect(result.action).toBe("Ask a clarifying question");
   });
+
+  // Scenario D (no invented capabilities): an unsupported-capability match
+  // must override every other signal, even a high-scoring, high-intent band.
+  it("never engages when the conversation asks for an unsupported capability, regardless of band/intent", () => {
+    const result = determineRecommendedAction({
+      band: "HIGH",
+      promotionRisk: "LOW",
+      intentScore: 95,
+      problemScore: 95,
+      asksForSolution: true,
+      unsupportedCapability: { matched: true, phrase: "physically repairing a cracked screen" },
+    });
+    expect(result.action).toBe("Do not engage");
+    expect(result.rationale).toContain("physically repairing a cracked screen");
+    expect(result.rationale.toLowerCase()).toContain("outside what your product currently supports");
+  });
+
+  it("does not claim the product can solve an unsupported request even implicitly", () => {
+    const result = determineRecommendedAction({
+      band: "HIGH",
+      promotionRisk: "LOW",
+      intentScore: 95,
+      problemScore: 95,
+      asksForSolution: true,
+      unsupportedCapability: { matched: true, phrase: null },
+    });
+    expect(result.action).not.toBe("Mention your product");
+  });
+
+  // Phase 4.1: rationale must be grounded in the actual conversation, not
+  // only a generic bucketed description.
+  it("includes the matched phrase as evidence in the rationale when one is given", () => {
+    const result = determineRecommendedAction({
+      band: "REVIEW",
+      promotionRisk: "MEDIUM",
+      intentScore: 20,
+      problemScore: 75,
+      asksForSolution: false,
+      matchedProblemPhrase: "overdue invoice",
+    });
+    expect(result.rationale).toContain("overdue invoice");
+  });
+
+  it("omits the evidence parenthetical when no phrase matched", () => {
+    const result = determineRecommendedAction({
+      band: "REVIEW",
+      promotionRisk: "MEDIUM",
+      intentScore: 20,
+      problemScore: 75,
+      asksForSolution: false,
+      matchedProblemPhrase: null,
+    });
+    expect(result.rationale).not.toContain("matched:");
+  });
 });

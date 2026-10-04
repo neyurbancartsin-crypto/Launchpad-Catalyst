@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ICP, SaaSProject } from "@prisma/client";
 
-const { mockSyncOpportunities, prismaMocks } = vi.hoisted(() => ({
-  mockSyncOpportunities: vi.fn(),
-  prismaMocks: {
-    saaSProjectUpdateMany: vi.fn(),
-    saaSProjectUpdate: vi.fn(),
-    discoveryRunCreate: vi.fn(),
-  },
-}));
+const { mockSyncOpportunities, mockCreateNotifications, mockGenerateFreshQueries, prismaMocks } =
+  vi.hoisted(() => ({
+    mockSyncOpportunities: vi.fn(),
+    mockCreateNotifications: vi.fn(),
+    mockGenerateFreshQueries: vi.fn(),
+    prismaMocks: {
+      saaSProjectUpdateMany: vi.fn(),
+      saaSProjectUpdate: vi.fn(),
+      discoveryRunCreate: vi.fn(),
+    },
+  }));
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -25,14 +28,27 @@ vi.mock("@/lib/discovery", () => ({
   syncOpportunities: mockSyncOpportunities,
 }));
 
+// Notification creation has its own dedicated tests (notifications.test.ts);
+// here it's mocked so discovery-run's tests stay focused on locking/recording.
+vi.mock("@/lib/notifications", () => ({
+  createNotificationsForNewOpportunities: mockCreateNotifications,
+}));
+
+// Query generation has its own dedicated tests
+// (generate-discovery-queries.test.ts); here it's mocked so these tests stay
+// focused on locking/recording, exactly like the notifications mock above.
+vi.mock("@/lib/search/generate-discovery-queries", () => ({
+  generateFreshQueries: mockGenerateFreshQueries,
+}));
+
 const { runDiscoverySync, claimDiscoveryLock, formatSyncFailures } = await import(
   "../discovery-run"
 );
 
-const project = { id: "project-1" } as unknown as SaaSProject;
+const project = { id: "project-1", userId: "user-1" } as unknown as SaaSProject;
 const icp = {} as unknown as ICP;
 
-const emptySummary = { discovered: 0, updated: 0, perPlatform: [] };
+const emptySummary = { discovered: 0, updated: 0, newOpportunityIds: [], perPlatform: [] };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -41,6 +57,7 @@ beforeEach(() => {
   prismaMocks.saaSProjectUpdate.mockResolvedValue({ id: "project-1" });
   prismaMocks.discoveryRunCreate.mockResolvedValue({ id: "run-1" });
   mockSyncOpportunities.mockResolvedValue(emptySummary);
+  mockGenerateFreshQueries.mockResolvedValue([]);
 });
 
 describe("claimDiscoveryLock", () => {
@@ -68,7 +85,12 @@ describe("claimDiscoveryLock", () => {
 
 describe("runDiscoverySync", () => {
   it("runs syncOpportunities and records a DiscoveryRun on success", async () => {
-    mockSyncOpportunities.mockResolvedValue({ discovered: 3, updated: 1, perPlatform: [] });
+    mockSyncOpportunities.mockResolvedValue({
+      discovered: 3,
+      updated: 1,
+      newOpportunityIds: ["opp-1", "opp-2", "opp-3"],
+      perPlatform: [],
+    });
 
     const outcome = await runDiscoverySync(project, icp, { isAuto: false });
 
@@ -122,6 +144,35 @@ describe("runDiscoverySync", () => {
     expect(projectUpdateData).not.toHaveProperty("lastAutoDiscoveryAt");
   });
 
+  it("notifies the project owner about new opportunities on an automatic run", async () => {
+    mockSyncOpportunities.mockResolvedValue({
+      discovered: 2,
+      updated: 0,
+      newOpportunityIds: ["opp-1", "opp-2"],
+      perPlatform: [],
+    });
+
+    await runDiscoverySync(project, icp, { isAuto: true });
+
+    expect(mockCreateNotifications).toHaveBeenCalledWith("user-1", "project-1", [
+      "opp-1",
+      "opp-2",
+    ]);
+  });
+
+  it("does not notify for a manual run, even when new opportunities are found", async () => {
+    mockSyncOpportunities.mockResolvedValue({
+      discovered: 1,
+      updated: 0,
+      newOpportunityIds: ["opp-1"],
+      perPlatform: [],
+    });
+
+    await runDiscoverySync(project, icp, { isAuto: false });
+
+    expect(mockCreateNotifications).not.toHaveBeenCalled();
+  });
+
   it("releases the lock even when syncOpportunities throws, so the project isn't stuck locked", async () => {
     mockSyncOpportunities.mockRejectedValue(new Error("unexpected crash"));
 
@@ -139,6 +190,7 @@ describe("runDiscoverySync", () => {
     mockSyncOpportunities.mockResolvedValue({
       discovered: 0,
       updated: 0,
+      newOpportunityIds: [],
       perPlatform: [
         { platform: "STACKOVERFLOW", opportunities: 0, status: "RATE_LIMITED", error: "slow down" },
       ],
@@ -149,6 +201,34 @@ describe("runDiscoverySync", () => {
     const runData = prismaMocks.discoveryRunCreate.mock.calls[0][0].data;
     expect(runData.errorSummary).toContain("STACKOVERFLOW");
     expect(runData.errorSummary).toContain("Rate limited");
+  });
+
+  it("generates fresh queries once per run, passes them to syncOpportunities, and persists them on the DiscoveryRun", async () => {
+    mockGenerateFreshQueries.mockResolvedValue(["clients delaying freelance payments", "late payment problems"]);
+
+    await runDiscoverySync(project, icp, { isAuto: false });
+
+    expect(mockGenerateFreshQueries).toHaveBeenCalledTimes(1);
+    expect(mockGenerateFreshQueries).toHaveBeenCalledWith(project, icp);
+    expect(mockSyncOpportunities).toHaveBeenCalledWith(project, icp, {
+      freshQueries: ["clients delaying freelance payments", "late payment problems"],
+    });
+    const runData = prismaMocks.discoveryRunCreate.mock.calls[0][0].data;
+    expect(runData.queriesUsed).toEqual([
+      "clients delaying freelance payments",
+      "late payment problems",
+    ]);
+  });
+
+  it("still runs discovery normally when query generation yields nothing (e.g. a transient AI failure)", async () => {
+    mockGenerateFreshQueries.mockResolvedValue([]);
+
+    const outcome = await runDiscoverySync(project, icp, { isAuto: false });
+
+    expect(outcome.ran).toBe(true);
+    expect(mockSyncOpportunities).toHaveBeenCalledWith(project, icp, { freshQueries: [] });
+    const runData = prismaMocks.discoveryRunCreate.mock.calls[0][0].data;
+    expect(runData.queriesUsed).toEqual([]);
   });
 });
 

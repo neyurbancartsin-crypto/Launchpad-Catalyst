@@ -102,11 +102,12 @@ export default async function ReportsPage() {
             />
             <p className="text-sm text-muted">{payload.activitySummary}</p>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {/* Signups excluded — no attribution link exists yet between a
+                specific conversation and a specific signup (see funnel.ts). */}
+            <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
               <StatTile label="Opportunities" value={payload.funnel.opportunities} />
               <StatTile label="Engagements" value={payload.funnel.engagements} />
               <StatTile label="Visits" value={payload.funnel.websiteVisits} />
-              <StatTile label="Signups" value={payload.funnel.signups} />
               <StatTile label="Activated" value={payload.funnel.activations} />
               <StatTile label="Paid" value={payload.funnel.paid} />
             </div>

@@ -48,12 +48,12 @@ type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
   primary:
-    "bg-brand text-brand-foreground hover:bg-[#2650c4] disabled:bg-[#a9bcf0]",
+    "bg-brand text-brand-foreground hover:bg-brand-hover disabled:bg-brand-disabled",
   secondary:
     "border border-border bg-surface text-foreground hover:bg-surface-muted disabled:text-muted",
-  ghost: "text-brand hover:bg-brand-soft disabled:text-muted",
+  ghost: "text-foreground hover:bg-brand-soft disabled:text-muted",
   danger:
-    "border border-[#f0c4c1] bg-danger-soft text-danger hover:bg-[#fbdedb] disabled:opacity-60",
+    "border border-danger-border bg-danger-soft text-danger hover:bg-danger-soft/70 disabled:opacity-60",
 };
 
 export function Button({
@@ -76,6 +76,7 @@ export function Button({
 type BadgeTone =
   | "neutral"
   | "brand"
+  | "opportunity"
   | "success"
   | "warning"
   | "danger"
@@ -83,10 +84,14 @@ type BadgeTone =
 
 const BADGE_TONES: Record<BadgeTone, string> = {
   neutral: "border-border bg-surface-muted text-muted",
-  brand: "border-[#c4d3f7] bg-brand-soft text-brand",
-  success: "border-[#bde3d1] bg-success-soft text-success",
-  warning: "border-[#f2d8a8] bg-warning-soft text-warning",
-  danger: "border-[#f0c4c1] bg-danger-soft text-danger",
+  // The soft lime treatment — selected/active states, "worth a look" signals.
+  brand: "border-brand-border bg-brand-soft text-foreground",
+  // The strong lime treatment, reserved for a genuine high-value signal
+  // (e.g. a HIGH-priority opportunity) — solid fill, not just a tint.
+  opportunity: "border-opportunity bg-opportunity text-opportunity-foreground",
+  success: "border-success-border bg-success-soft text-success",
+  warning: "border-warning-border bg-warning-soft text-warning",
+  danger: "border-danger-border bg-danger-soft text-danger",
   demo: "border-demo-border bg-demo-soft text-demo",
 };
 

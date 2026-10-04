@@ -4,13 +4,32 @@ import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { FormState } from "@/actions/saas-project.actions";
 import { Button, Card, Field, Input, Textarea } from "@/components/ui";
+import { useDiscoveryStageIndex } from "@/components/opportunities/discovery-stage-tracker";
+import { DiscoveryFullScreen } from "@/components/opportunities/discovery-fullscreen";
 
+/**
+ * Onboarding's own "Find My Opportunities" trigger — a different server
+ * action (`completeOnboardingAction`) from the Opportunities page's "Find
+ * New Opportunities" (`refreshOpportunitiesAction`), but both end in the
+ * same discovery pipeline, so both get the same full-screen tracker. This
+ * one never reaches "completed" on its own: `completeOnboardingAction`
+ * redirects to /strategy on success rather than returning a result, so the
+ * real completion signal here is simply the page navigating away. The
+ * tracker holds at "Analysing relevance" for as long as the real request
+ * takes and is replaced by the next page the moment it actually finishes —
+ * it never shows "Best opportunities found" before that.
+ */
 function SubmitButton() {
   const { pending } = useFormStatus();
+  const stepIndex = useDiscoveryStageIndex(pending, false);
+
   return (
-    <Button type="submit" disabled={pending}>
-      {pending ? "Finding your opportunities…" : "Find My Opportunities"}
-    </Button>
+    <>
+      <Button type="submit" disabled={pending}>
+        Find My Opportunities
+      </Button>
+      {pending ? <DiscoveryFullScreen stepIndex={stepIndex} /> : null}
+    </>
   );
 }
 
@@ -50,6 +69,16 @@ export function OnboardingWizard({
           <Textarea name="problemSolved" required minLength={20} />
         </Field>
 
+        <Field
+          label="What are the main use cases of your product?"
+          hint="Optional. Tell us when or why someone would use your product."
+        >
+          <Textarea
+            name="useCases"
+            placeholder="Testing a new TV for dead pixels&#10;Checking a second-hand monitor before buying&#10;Diagnosing a suspected display defect"
+          />
+        </Field>
+
         <Field label="Who is it for?" hint="Optional — Catalyst can figure this out.">
           <Input
             name="targetCustomer"
@@ -73,7 +102,7 @@ export function OnboardingWizard({
         {state.error ? (
           <p
             role="alert"
-            className="rounded-lg border border-[#f0c4c1] bg-danger-soft px-3 py-2 text-sm text-danger"
+            className="rounded-lg border border-danger-border bg-danger-soft px-3 py-2 text-sm text-danger"
           >
             {state.error}
           </p>

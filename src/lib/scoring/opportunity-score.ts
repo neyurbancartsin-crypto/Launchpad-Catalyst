@@ -175,6 +175,60 @@ function hasGenuineAsk(text: string): boolean {
   return /\?/.test(text) || detectsSolutionRequest(text);
 }
 
+export interface UnsupportedCapabilityMatch {
+  /** True when the text appears to ask about a capability this product doesn't have. */
+  matched: boolean;
+  /** The specific `unsupportedUseCases` phrase that matched, for a grounded explanation. */
+  phrase: string | null;
+}
+
+/**
+ * No invented capabilities (engineering rule 5): a conversation can share
+ * heavy problem/ICP vocabulary with this product while actually asking for
+ * something it explicitly cannot do (e.g. "my screen is physically cracked"
+ * for a dead-pixel *detection* tool). This checks the founder's own
+ * `unsupportedUseCases` list — never guessed elsewhere — so scoring can stop
+ * treating that conversation as a solvable opportunity. Same matching
+ * approach as `keywordMatchScore`'s phrase strength: an exact phrase always
+ * counts, and a longer descriptive phrase counts on majority word overlap,
+ * so paraphrased wording of the same unsupported request still matches.
+ */
+export function detectsUnsupportedCapability(
+  text: string,
+  unsupportedUseCases: string[],
+): UnsupportedCapabilityMatch {
+  if (unsupportedUseCases.length === 0) return { matched: false, phrase: null };
+
+  const haystack = normalise(text);
+  const tokens = new Set(tokenize(text));
+  for (const phrase of unsupportedUseCases) {
+    if (phraseStrength(haystack, tokens, phrase) > 0) {
+      return { matched: true, phrase };
+    }
+  }
+  return { matched: false, phrase: null };
+}
+
+/**
+ * The single best-matching phrase from a list, for grounding a rationale in
+ * the actual conversation (Phase 4.1: "evidence-based, not generic
+ * boilerplate") instead of only a bucketed score. Returns null when nothing
+ * matched at all, same threshold as `keywordMatchScore`.
+ */
+export function topMatchedPhrase(text: string, phrases: string[]): string | null {
+  if (phrases.length === 0) return null;
+  const haystack = normalise(text);
+  const tokens = new Set(tokenize(text));
+  let best: { phrase: string; strength: number } | null = null;
+  for (const phrase of phrases) {
+    const strength = phraseStrength(haystack, tokens, phrase);
+    if (strength > 0 && (!best || strength > best.strength)) {
+      best = { phrase, strength };
+    }
+  }
+  return best?.phrase ?? null;
+}
+
 export function computeComponents(input: {
   text: string;
   icpKeywords: string[];
@@ -186,6 +240,8 @@ export function computeComponents(input: {
   commentCount: number;
   postedAt: Date;
   now?: Date;
+  /** Capabilities the product explicitly does not have (may be omitted/empty). */
+  unsupportedUseCases?: string[];
 }): ScoreComponents {
   const relevanceCorpus = [input.productCategory, ...input.communityTopics];
   const genuineAsk = hasGenuineAsk(input.text);
@@ -208,7 +264,22 @@ export function computeComponents(input: {
   // problem/ICP/intent are dampened, since this text isn't a person
   // describing their own situation.
   const { isLowQuality } = assessContentQuality(input.text, genuineAsk);
-  const dampen = (score: number) => (isLowQuality ? Math.round(score * 0.3) : score);
+
+  // No invented capabilities: a conversation asking for something the
+  // product explicitly does not do must not be scored as if it could be
+  // solved, even when it otherwise overlaps heavily with ICP/problem
+  // vocabulary (e.g. "screen is physically cracked" for a dead-pixel
+  // *detection* tool). Dampened the same way as low-quality content, and the
+  // two can stack — a promotional post about an unsupported capability is
+  // doubly unlikely to be a real opportunity.
+  const unsupported = detectsUnsupportedCapability(input.text, input.unsupportedUseCases ?? []);
+
+  const dampen = (score: number) => {
+    let result = score;
+    if (isLowQuality) result = Math.round(result * 0.3);
+    if (unsupported.matched) result = Math.round(result * 0.3);
+    return result;
+  };
 
   return {
     icpScore: dampen(rawIcpScore),

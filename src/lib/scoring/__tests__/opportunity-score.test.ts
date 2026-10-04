@@ -3,11 +3,13 @@ import {
   clampScore,
   computeComponents,
   computeOverallScore,
+  detectsUnsupportedCapability,
   engagementScore,
   keywordMatchScore,
   priorityBand,
   recencyScore,
   SCORE_WEIGHTS,
+  topMatchedPhrase,
 } from "../opportunity-score";
 
 const flat = (value: number) => ({
@@ -260,5 +262,105 @@ describe("clampScore", () => {
     expect(clampScore(-1)).toBe(0);
     expect(clampScore(101)).toBe(100);
     expect(clampScore(Number.NaN)).toBe(0);
+  });
+});
+
+describe("detectsUnsupportedCapability - no invented capabilities (Scenario D)", () => {
+  const unsupportedUseCases = ["physically repairing a cracked screen"];
+
+  it("matches an exact unsupported phrase", () => {
+    const result = detectsUnsupportedCapability(
+      "Can your tool help with physically repairing a cracked screen?",
+      unsupportedUseCases,
+    );
+    expect(result.matched).toBe(true);
+    expect(result.phrase).toBe("physically repairing a cracked screen");
+  });
+
+  it("matches a paraphrased version via word overlap, same as keywordMatchScore", () => {
+    const result = detectsUnsupportedCapability(
+      "My monitor's screen is physically cracked, can anything repair it?",
+      unsupportedUseCases,
+    );
+    expect(result.matched).toBe(true);
+  });
+
+  it("does not match unrelated text", () => {
+    const result = detectsUnsupportedCapability(
+      "How do I detect dead pixels on a new monitor before the return window closes?",
+      unsupportedUseCases,
+    );
+    expect(result.matched).toBe(false);
+    expect(result.phrase).toBeNull();
+  });
+
+  it("never matches when the list is empty — never guesses a limitation", () => {
+    const result = detectsUnsupportedCapability("physically repairing a cracked screen", []);
+    expect(result.matched).toBe(false);
+  });
+});
+
+describe("computeComponents - unsupported capability guard (Scenario D)", () => {
+  const base = {
+    // "cracked screen" deliberately overlaps with the unsupported phrase
+    // below — a broad ICP vocabulary genuinely can share words with a
+    // capability the product doesn't have; the guard must still catch it.
+    icpKeywords: ["dead pixel", "stuck pixel", "cracked screen"],
+    problemKeywords: ["dead pixel", "cracked screen"],
+    intentSignals: ["how do i", "any way to"],
+    productCategory: "display testing",
+    communityTopics: ["monitors", "displays"],
+    upvotes: 5,
+    commentCount: 3,
+    postedAt: new Date("2026-01-30T00:00:00Z"),
+    now: new Date("2026-01-31T00:00:00Z"),
+    unsupportedUseCases: ["physically repairing a cracked screen"],
+  };
+
+  it("dampens icp/problem scores for a request asking about an unsupported capability", () => {
+    const text =
+      "My screen is physically cracked after I dropped it. Is there any way to repair a cracked screen myself?";
+
+    const withGuard = computeComponents({ ...base, text });
+    const withoutGuard = computeComponents({ ...base, unsupportedUseCases: [], text });
+
+    expect(withGuard.icpScore).toBeLessThan(withoutGuard.icpScore);
+    expect(withGuard.problemScore).toBeLessThan(withoutGuard.problemScore);
+  });
+
+  it("does not dampen a genuinely supported request even when unsupportedUseCases is populated", () => {
+    const supported = computeComponents({
+      ...base,
+      text: "I think my new monitor has a dead pixel — how do I confirm it before the return window closes?",
+    });
+    expect(supported.icpScore).toBeGreaterThan(0);
+  });
+
+  it("is a no-op when unsupportedUseCases is omitted (backward compatible with older ICPs)", () => {
+    const { unsupportedUseCases, ...rest } = base;
+    void unsupportedUseCases;
+    const result = computeComponents({
+      ...rest,
+      text: "Is there any way to repair a cracked screen myself?",
+    });
+    expect(result).toBeDefined();
+  });
+});
+
+describe("topMatchedPhrase - evidence grounding (Phase 4.1)", () => {
+  it("returns the best-matching phrase for use in a rationale", () => {
+    const phrase = topMatchedPhrase(
+      "I've been chasing an overdue invoice from my client for three weeks now.",
+      ["overdue invoice", "chasing payment"],
+    );
+    expect(phrase).toBe("overdue invoice");
+  });
+
+  it("returns null when nothing matches, rather than a misleading phrase", () => {
+    const phrase = topMatchedPhrase("Completely unrelated text about gardening.", [
+      "overdue invoice",
+      "chasing payment",
+    ]);
+    expect(phrase).toBeNull();
   });
 });

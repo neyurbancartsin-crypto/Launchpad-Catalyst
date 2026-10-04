@@ -61,6 +61,18 @@ export function explainOpportunity(o: {
   return [problem, intent, risk].join(" · ");
 }
 
+/**
+ * Opportunity strength reads through lime intensity, not a traffic-light
+ * success/warning scale: HIGH gets the strong solid-lime signal, REVIEW the
+ * soft lime tint, and anything below that is deliberately neutral —
+ * warning/danger stay reserved for actual promotion risk (see RiskBadge).
+ * Shared by every lime-accented element on an opportunity (badges, the
+ * card's own highlight border) so the same band always reads the same way.
+ */
+export function bandTone(band: PriorityBand): "opportunity" | "brand" | "neutral" {
+  return band === "HIGH" ? "opportunity" : band === "REVIEW" ? "brand" : "neutral";
+}
+
 export function ScoreBadge({
   score,
   band,
@@ -68,16 +80,8 @@ export function ScoreBadge({
   score: number;
   band: PriorityBand;
 }) {
-  const tone =
-    band === "HIGH"
-      ? "success"
-      : band === "REVIEW"
-        ? "brand"
-        : band === "LOW"
-          ? "warning"
-          : "neutral";
   return (
-    <Badge tone={tone} title={BAND_LABELS[band]}>
+    <Badge tone={bandTone(band)} title={BAND_LABELS[band]}>
       {score}/100
     </Badge>
   );
@@ -85,16 +89,8 @@ export function ScoreBadge({
 
 export function TierBadge({ band }: { band: PriorityBand }) {
   const tier = OPPORTUNITY_TIER[band];
-  const tone =
-    band === "HIGH"
-      ? "success"
-      : band === "REVIEW"
-        ? "brand"
-        : band === "LOW"
-          ? "neutral"
-          : "neutral";
   return (
-    <Badge tone={tone} title={tier.hint}>
+    <Badge tone={bandTone(band)} title={tier.hint}>
       {tier.label}
     </Badge>
   );

@@ -16,6 +16,14 @@ import type { NextAuthConfig } from "next-auth";
  * `NextAuth` instance from this config alone.
  */
 export const authConfig = {
+  // Vercel terminates TLS and forwards the real Host header, and preview
+  // deployments get a new *.vercel.app subdomain each time — there's no
+  // single hostname to hardcode ahead of time. Auth.js's own auto-detection
+  // (trusting the host when `process.env.VERCEL` is set) should cover this,
+  // but it depends on Vercel's "Automatically expose System Environment
+  // Variables" project setting staying enabled; setting this explicitly
+  // means production auth doesn't depend on that toggle.
+  trustHost: true,
   session: { strategy: "jwt" },
   pages: {
     signIn: "/login",

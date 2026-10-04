@@ -18,11 +18,13 @@ export interface SearchIntelligenceInput {
   buyingTriggers: string[];
   /** Old flat topic list — used only when `positiveKeywords` is empty, for backward compatibility. */
   searchTopics: string[];
+  /** Concrete things the product actually does — widens query diversity beyond problem phrasing alone (may be empty on older projects). */
+  supportedUseCases?: string[];
 }
 
 export interface QueryGroup {
   /** Not shown to the user — just documents where a group of terms came from. */
-  label: "positive" | "problem" | "situational";
+  label: "positive" | "problem" | "situational" | "use-case";
   terms: string[];
 }
 
@@ -81,20 +83,27 @@ export function buildSearchStrategy(
   );
   const problemGroup = dedupe(icp.problemMap.map((entry) => entry.problem));
   const situationalGroup = dedupe(icp.buyingTriggers);
+  // Additive diversity source (Phase 3): concrete use cases widen coverage
+  // beyond problem-shaped phrasing alone, e.g. a "checking a second-hand
+  // monitor" use case surfaces conversations that never state the problem
+  // explicitly. Empty on older projects — falls out of the merge below with
+  // no effect, same backward-compatibility pattern as positiveKeywords.
+  const useCaseGroup = dedupe(icp.supportedUseCases ?? []);
 
   const groups: QueryGroup[] = [
     { label: "positive", terms: positiveGroup },
     { label: "problem", terms: problemGroup },
     { label: "situational", terms: situationalGroup },
+    { label: "use-case", terms: useCaseGroup },
   ];
 
   // Priority order: the founder's/AI's explicit positive keywords first,
-  // then problem-map phrasing, then buying-trigger situations — each only
-  // contributing terms not already present, so the same idea doesn't eat
-  // twice into the size limit.
+  // then problem-map phrasing, then buying-trigger situations, then use
+  // cases — each only contributing terms not already present, so the same
+  // idea doesn't eat twice into the size limit.
   const seenOriginal = new Set<string>();
   const originalTerms: string[] = [];
-  for (const term of [...positiveGroup, ...problemGroup, ...situationalGroup]) {
+  for (const term of [...positiveGroup, ...problemGroup, ...situationalGroup, ...useCaseGroup]) {
     const key = normalise(term);
     if (seenOriginal.has(key)) continue;
     seenOriginal.add(key);

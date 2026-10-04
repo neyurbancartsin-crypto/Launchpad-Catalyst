@@ -34,13 +34,75 @@ export type PlatformSyncStatus =
   | "API_ERROR"
   | "DB_ERROR";
 
+/**
+ * Expands problem/pain-point phrases with the ICP's own keywordSynonyms —
+ * e.g. a painPoint containing "dead pixel" also gets a "stuck pixel" variant
+ * when that's a configured synonym. Without this, a real semantic match
+ * (someone using the founder's listed synonym rather than their exact
+ * wording) only ever showed up in `icpScore` (via `positiveKeywords`), never
+ * in `problemScore`, understating problem fit for no real reason.
+ */
+function expandWithSynonyms(phrases: string[], keywordSynonyms: KeywordSynonymEntry[]): string[] {
+  if (keywordSynonyms.length === 0) return phrases;
+  const result = [...phrases];
+  for (const phrase of phrases) {
+    const lower = phrase.toLowerCase();
+    for (const entry of keywordSynonyms) {
+      const keyword = entry.keyword.toLowerCase();
+      if (keyword.length === 0 || !lower.includes(keyword)) continue;
+      for (const synonym of entry.synonyms) {
+        result.push(lower.split(keyword).join(synonym.toLowerCase()));
+      }
+    }
+  }
+  return result;
+}
+
 function problemKeywordsFrom(icp: ICP): string[] {
   const map = (icp.problemMap as unknown as ProblemMapEntry[]) ?? [];
-  return [
+  const raw = [
     ...map.map((entry) => entry.problem),
     ...map.flatMap((entry) => entry.relatedProblems),
     ...icp.painPoints,
   ];
+  const keywordSynonyms = (icp.keywordSynonyms as unknown as KeywordSynonymEntry[]) ?? [];
+  return expandWithSynonyms(raw, keywordSynonyms);
+}
+
+/**
+ * A higher cap than `buildSearchStrategy`'s own (15) default — fresh and
+ * deterministic terms are merged here, and each adapter already takes only
+ * the first few (see each adapter's own `.slice()`), so there's no reason to
+ * truncate the combined pool tightly; it only needs to stay bounded.
+ */
+const MAX_RETRIEVAL_TERMS = 25;
+
+/**
+ * Puts this cycle's fresh AI-generated search angles ahead of the
+ * deterministic ICP-derived terms, for retrieval only — see the call site in
+ * `syncOpportunities` for why this must never touch `icpKeywords`/
+ * `problemKeywords`. Identical to `strategy` (no behavior change at all)
+ * when `freshQueries` is empty/undefined, e.g. a transient AI failure.
+ */
+function mergeFreshQueries(
+  strategy: BuiltSearchStrategy,
+  freshQueries: string[] | undefined,
+): BuiltSearchStrategy {
+  if (!freshQueries || freshQueries.length === 0) return strategy;
+
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const term of [...freshQueries, ...strategy.positiveTerms]) {
+    const trimmed = term.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(trimmed);
+    if (merged.length >= MAX_RETRIEVAL_TERMS) break;
+  }
+
+  return { ...strategy, positiveTerms: merged };
 }
 
 /** Builds the deterministic search strategy (positive/synonym-expanded/negative terms) for one ICP. */
@@ -53,6 +115,7 @@ function searchStrategyFrom(icp: ICP): BuiltSearchStrategy {
     problemMap: (icp.problemMap as unknown as ProblemMapEntry[]) ?? [],
     buyingTriggers: icp.buyingTriggers,
     searchTopics: icp.searchTopics,
+    supportedUseCases: icp.supportedUseCases,
   });
 }
 
@@ -78,6 +141,8 @@ function classifySyncError(
 export interface SyncSummary {
   discovered: number;
   updated: number;
+  /** Ids of opportunities that did not exist before this sync — used to notify about genuinely new finds, never re-scored or unchanged ones. */
+  newOpportunityIds: string[];
   perPlatform: {
     platform: Platform;
     opportunities: number;
@@ -90,6 +155,7 @@ export interface SyncSummary {
 export async function syncOpportunities(
   project: SaaSProject,
   icp: ICP,
+  options: { freshQueries?: string[] } = {},
 ): Promise<SyncSummary> {
   const competitors = project.competitors
     .split(/[,\n;]+/)
@@ -97,13 +163,27 @@ export async function syncOpportunities(
     .filter(Boolean);
 
   // Deterministic: expands synonyms, caps size, applies negative terms —
-  // no AI, computed once per sync rather than per platform/post.
+  // no AI, computed once per sync rather than per platform/post. Scoring
+  // inputs (`icpKeywords`/`problemKeywords` below) are derived from THIS
+  // object and never from `retrievalStrategy` — query diversity must never
+  // move an existing score, so the two stay fully independent.
   const strategy = searchStrategyFrom(icp);
   const icpKeywords = [...strategy.positiveTerms, ...icp.roles];
   const problemKeywords = problemKeywordsFrom(icp);
 
+  // Retrieval-only: when this cycle's AI-generated search angles are
+  // available, they lead the keyword list the adapters actually search
+  // with (adapters already take only the first few keywords per call — see
+  // each adapter's own `.slice()` — so putting fresh terms first is what
+  // makes a cycle actually search differently, with no adapter changes
+  // needed). The deterministic terms stay right behind them as a stable
+  // fallback, so a failed/empty AI call (see generateFreshQueries) leaves
+  // this byte-for-byte identical to the pre-diversity behavior.
+  const retrievalStrategy = mergeFreshQueries(strategy, options.freshQueries);
+
   let discovered = 0;
   let updated = 0;
+  const newOpportunityIds: string[] = [];
   const perPlatform: SyncSummary["perPlatform"] = [];
 
   // Resolve every platform's adapter and connection status once, up front —
@@ -137,13 +217,14 @@ export async function syncOpportunities(
         status,
         project,
         icp,
-        strategy,
+        strategy: retrievalStrategy,
         icpKeywords,
         problemKeywords,
         competitors,
       });
       discovered += result.discovered;
       updated += result.updated;
+      newOpportunityIds.push(...result.newOpportunityIds);
       perPlatform.push({
         platform,
         opportunities: result.count,
@@ -166,12 +247,13 @@ export async function syncOpportunities(
     }
   }
 
-  return { discovered, updated, perPlatform };
+  return { discovered, updated, newOpportunityIds, perPlatform };
 }
 
 interface PlatformSyncResult {
   discovered: number;
   updated: number;
+  newOpportunityIds: string[];
   count: number;
   status: PlatformSyncStatus;
   error?: string;
@@ -203,7 +285,7 @@ async function syncPlatform(args: {
 
   // Never fabricate results for a platform that cannot serve them.
   if (status.status === "ERROR") {
-    return { discovered: 0, updated: 0, count: 0, status: "API_ERROR", error: status.message };
+    return { discovered: 0, updated: 0, newOpportunityIds: [], count: 0, status: "API_ERROR", error: status.message };
   }
 
   let communities;
@@ -214,10 +296,10 @@ async function syncPlatform(args: {
     });
   } catch (error) {
     if (error instanceof PlatformRateLimitError) {
-      return { discovered: 0, updated: 0, count: 0, status: "RATE_LIMITED", error: error.message };
+      return { discovered: 0, updated: 0, newOpportunityIds: [], count: 0, status: "RATE_LIMITED", error: error.message };
     }
     const classified = classifySyncError(error);
-    return { discovered: 0, updated: 0, count: 0, status: classified.status, error: classified.message };
+    return { discovered: 0, updated: 0, newOpportunityIds: [], count: 0, status: classified.status, error: classified.message };
   }
 
   let communityEntries: {
@@ -263,7 +345,7 @@ async function syncPlatform(args: {
     }
   } catch (error) {
     const classified = classifySyncError(error);
-    return { discovered: 0, updated: 0, count: 0, status: classified.status, error: classified.message };
+    return { discovered: 0, updated: 0, newOpportunityIds: [], count: 0, status: classified.status, error: classified.message };
   }
 
   // Some adapters' search endpoints have a much tighter rate limit than
@@ -289,6 +371,7 @@ async function syncPlatform(args: {
   let discovered = 0;
   let updated = 0;
   let count = 0;
+  const newOpportunityIds: string[] = [];
   // Set once a rate limit is hit; stops all further requests to this
   // platform for the rest of the run while keeping everything synced so far.
   let stopped: { message: string } | null = null;
@@ -377,6 +460,7 @@ async function syncPlatform(args: {
             intentSignals: strategy.intentSignals,
             productCategory: icp.productCategory,
             competitors,
+            unsupportedUseCases: icp.unsupportedUseCases ?? [],
           });
 
           opportunity = await prisma.opportunity.upsert({
@@ -415,8 +499,12 @@ async function syncPlatform(args: {
             },
           });
 
-          if (existing) updated += 1;
-          else discovered += 1;
+          if (existing) {
+            updated += 1;
+          } else {
+            discovered += 1;
+            newOpportunityIds.push(opportunity.id);
+          }
         }
         count += 1;
 
@@ -448,6 +536,7 @@ async function syncPlatform(args: {
     return {
       discovered,
       updated,
+      newOpportunityIds,
       count,
       status: "RATE_LIMITED",
       // Only surface the message when nothing was salvaged — a rate limit
@@ -456,12 +545,12 @@ async function syncPlatform(args: {
     };
   }
   if (count > 0) {
-    return { discovered, updated, count, status: "OK" };
+    return { discovered, updated, newOpportunityIds, count, status: "OK" };
   }
   if (lastNonFatal) {
-    return { discovered, updated, count: 0, status: lastNonFatal.status, error: lastNonFatal.message };
+    return { discovered, updated, newOpportunityIds, count: 0, status: lastNonFatal.status, error: lastNonFatal.message };
   }
-  return { discovered, updated, count: 0, status: "EMPTY" };
+  return { discovered, updated, newOpportunityIds, count: 0, status: "EMPTY" };
 }
 
 /**

@@ -205,6 +205,39 @@ describe("buildSearchStrategy - arbitrary business examples (not hardcoded)", ()
   });
 });
 
+describe("buildSearchStrategy - supported use cases (Phase 3 diversity)", () => {
+  it("includes supportedUseCases as their own query group", () => {
+    const result = buildSearchStrategy(
+      baseInput({
+        positiveKeywords: ["dead pixel"],
+        supportedUseCases: ["testing a new TV for dead pixels", "checking a second-hand monitor"],
+      }),
+    );
+
+    expect(result.groups.find((g) => g.label === "use-case")?.terms).toEqual([
+      "testing a new TV for dead pixels",
+      "checking a second-hand monitor",
+    ]);
+    expect(result.positiveTerms).toContain("testing a new TV for dead pixels");
+  });
+
+  it("is backward compatible when supportedUseCases is omitted entirely", () => {
+    const result = buildSearchStrategy(baseInput({ positiveKeywords: ["dead pixel"] }));
+    expect(result.groups.find((g) => g.label === "use-case")?.terms).toEqual([]);
+    expect(result.positiveTerms).toContain("dead pixel");
+  });
+
+  it("still deduplicates a use case that overlaps with an existing positive keyword", () => {
+    const result = buildSearchStrategy(
+      baseInput({
+        positiveKeywords: ["dead pixel"],
+        supportedUseCases: ["dead pixel"],
+      }),
+    );
+    expect(result.positiveTerms.filter((t) => t.toLowerCase() === "dead pixel")).toHaveLength(1);
+  });
+});
+
 describe("matchesNegativeKeyword", () => {
   it("is conservative: only an exact phrase match excludes a conversation", () => {
     expect(matchesNegativeKeyword("We are hiring a support engineer", ["hiring"])).toBe(true);

@@ -1,6 +1,7 @@
-import { refreshOpportunitiesAction, toggleAutoDiscoveryAction } from "@/actions/saas-project.actions";
+import { toggleAutoDiscoveryAction } from "@/actions/saas-project.actions";
 import { Badge, Button, Card, CardHeader } from "@/components/ui";
-import { FindOpportunitiesButton } from "./find-opportunities-button";
+import { formatCooldown, manualDiscoveryAvailableAt } from "@/lib/discovery-cooldown";
+import { DiscoveryProgress } from "./discovery-progress";
 import { relativeTime } from "./opportunity-bits";
 
 interface RunSummary {
@@ -70,9 +71,19 @@ export function DiscoveryPanel({
         </p>
       )}
 
-      <form action={refreshOpportunitiesAction} className="mt-3">
-        <FindOpportunitiesButton />
-      </form>
+      {(() => {
+        const nextManualAt = manualDiscoveryAvailableAt(lastSyncedAt);
+        return nextManualAt ? (
+          <p className="mt-1 text-xs text-muted">
+            Next refresh available in {formatCooldown(nextManualAt)}
+            {autoDiscoveryEnabled
+              ? " — automatic discovery may find new conversations sooner."
+              : ""}
+          </p>
+        ) : null;
+      })()}
+
+      <DiscoveryProgress className="mt-3" lastSyncedAt={lastSyncedAt} />
 
       {previous.length > 0 ? (
         <div className="mt-4 border-t border-border pt-3">

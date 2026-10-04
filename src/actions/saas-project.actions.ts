@@ -12,7 +12,7 @@ import {
   setActiveProjectCookie,
 } from "@/lib/project";
 import { getAIProvider } from "@/lib/ai/registry";
-import { runDiscoverySync } from "@/lib/discovery-run";
+import { manualDiscoveryAvailableAt, runDiscoverySync } from "@/lib/discovery-run";
 import type { SaaSIntake } from "@/lib/ai/types";
 
 export interface FormState {
@@ -26,6 +26,7 @@ const intakeSchema = z.object({
   problemSolved: z.string().trim().min(20, "Describe the problem in at least 20 characters"),
   targetCustomer: z.string().trim().max(300).optional().or(z.literal("")),
   website: z.string().trim().max(300).optional().or(z.literal("")),
+  useCases: z.string().trim().max(1000).optional().or(z.literal("")),
 });
 
 function readIntake(formData: FormData) {
@@ -55,12 +56,14 @@ export async function completeOnboardingAction(
   const data = parsed.data;
   const targetCustomer = data.targetCustomer?.trim() || null;
   const website = data.website?.trim() || null;
+  const useCases = data.useCases?.trim() || null;
 
   const intake: SaaSIntake = {
     description: data.description,
     problemSolved: data.problemSolved,
     targetCustomer,
     website,
+    useCases,
   };
 
   const ai = getAIProvider();
@@ -90,6 +93,7 @@ export async function completeOnboardingAction(
     website,
     description: data.description,
     problemSolved: data.problemSolved,
+    useCases,
     targetCustomer: targetCustomer ?? analysis.primaryCustomer,
     category: analysis.productCategory,
     pricing: null,
@@ -144,6 +148,8 @@ export async function completeOnboardingAction(
       positiveKeywords: analysis.positiveKeywords,
       keywordSynonyms: analysis.keywordSynonyms as unknown as object,
       negativeKeywords: analysis.negativeKeywords,
+      supportedUseCases: analysis.supportedUseCases,
+      unsupportedUseCases: analysis.unsupportedUseCases,
     },
     update: {
       productSummary: analysis.productSummary,
@@ -164,6 +170,8 @@ export async function completeOnboardingAction(
       positiveKeywords: analysis.positiveKeywords,
       keywordSynonyms: analysis.keywordSynonyms as unknown as object,
       negativeKeywords: analysis.negativeKeywords,
+      supportedUseCases: analysis.supportedUseCases,
+      unsupportedUseCases: analysis.unsupportedUseCases,
     },
   });
 
@@ -200,6 +208,8 @@ const icpEditSchema = z.object({
   objections: z.string(),
   searchTopics: z.string(),
   intentSignals: z.string(),
+  supportedUseCases: z.string(),
+  unsupportedUseCases: z.string(),
 });
 
 function toLines(value: string): string[] {
@@ -234,6 +244,8 @@ export async function updateIcpAction(
       objections: toLines(data.objections),
       searchTopics: toLines(data.searchTopics),
       intentSignals: toLines(data.intentSignals),
+      supportedUseCases: toLines(data.supportedUseCases),
+      unsupportedUseCases: toLines(data.unsupportedUseCases),
       editedByUser: true,
     },
   });
@@ -252,15 +264,45 @@ export async function updateIcpAction(
  * already in progress for this project, this simply does nothing rather
  * than starting a second concurrent sync.
  */
-export async function refreshOpportunitiesAction(): Promise<void> {
+/**
+ * Mirrors `runDiscoverySync`'s own outcome — not a new status model, just
+ * exposing what it already returns so the UI can show a real count instead
+ * of a generic "done". An unexpected throw (a true crash, as opposed to the
+ * "locked" outcome `runDiscoverySync` returns normally) is deliberately left
+ * uncaught here, same as before this change: it still propagates to the
+ * existing dashboard error boundary.
+ */
+export type RefreshOpportunitiesResult =
+  | { status: "idle" }
+  | { status: "ok"; newCount: number }
+  | { status: "locked" }
+  /** `availableAt` is an ISO string (Server Action results must be plain-serializable). */
+  | { status: "cooldown"; availableAt: string };
+
+export async function refreshOpportunitiesAction(
+  _prevState: RefreshOpportunitiesResult,
+  _formData: FormData,
+): Promise<RefreshOpportunitiesResult> {
   const { project, icp } = await requireProjectWithIcp();
+
+  // Enforced here, server-side, before the lock is even attempted — reads
+  // `project.lastSyncedAt` fresh from the DB on every call, so this cannot
+  // be bypassed by a stale page, a new tab, or invoking this action
+  // directly: whatever the client believes, this check is authoritative.
+  const availableAt = manualDiscoveryAvailableAt(project.lastSyncedAt);
+  if (availableAt) {
+    return { status: "cooldown", availableAt: availableAt.toISOString() };
+  }
 
   // Surface unreachable platforms rather than letting them look like
   // "no opportunities found" (PRD s35), and keep a short discovery history.
-  await runDiscoverySync(project, icp, { isAuto: false });
+  const outcome = await runDiscoverySync(project, icp, { isAuto: false });
 
   revalidatePath("/opportunities");
   revalidatePath("/dashboard");
+
+  if (!outcome.ran) return { status: "locked" };
+  return { status: "ok", newCount: outcome.summary.discovered };
 }
 
 /**

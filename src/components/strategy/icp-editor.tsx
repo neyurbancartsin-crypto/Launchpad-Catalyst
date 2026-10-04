@@ -16,6 +16,8 @@ export interface IcpEditorValues {
   objections: string[];
   searchTopics: string[];
   intentSignals: string[];
+  supportedUseCases: string[];
+  unsupportedUseCases: string[];
 }
 
 function SaveButton() {
@@ -91,6 +93,16 @@ export function IcpEditor({
           <ReadOnlyList label="Pain points" items={values.painPoints} />
           <ReadOnlyList label="Buying triggers" items={values.buyingTriggers} />
           <ReadOnlyList label="Likely objections" items={values.objections} />
+          <ReadOnlyList label="Supported use cases" items={values.supportedUseCases} />
+          <ReadOnlyList
+            label="Does NOT support"
+            items={values.unsupportedUseCases}
+          />
+          {values.unsupportedUseCases.length === 0 ? (
+            <p className="text-xs text-muted">
+              No known unsupported use cases yet — add any here if conversations keep asking for something your product can&apos;t do.
+            </p>
+          ) : null}
         </dl>
       </Card>
     );
@@ -128,6 +140,18 @@ export function IcpEditor({
           name="intentSignals"
           value={values.intentSignals}
           hint="One per line. Phrases that suggest someone is looking for a solution."
+        />
+        <ListField
+          label="Supported use cases"
+          name="supportedUseCases"
+          value={values.supportedUseCases}
+          hint="One per line. Concrete things your product actually does."
+        />
+        <ListField
+          label="Does NOT support"
+          name="unsupportedUseCases"
+          value={values.unsupportedUseCases}
+          hint="One per line. Things people might confuse your product for, that it genuinely can't do — leave empty if none. This stops those conversations from being scored as if you could help."
         />
 
         {state.error ? (

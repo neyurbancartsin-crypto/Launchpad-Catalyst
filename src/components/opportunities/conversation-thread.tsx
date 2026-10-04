@@ -41,7 +41,7 @@ export function ConversationThread({
             <article
               className={`rounded-lg border p-3 ${
                 highlight
-                  ? "border-[#bde3d1] bg-success-soft/40"
+                  ? "border-success-border bg-success-soft/40"
                   : "border-border bg-surface"
               }`}
             >
