@@ -212,9 +212,21 @@ export class StackOverflowAdapter implements PlatformAdapter {
     const terms = [...query.keywords.slice(0, 3), ...(query.intentSignals ?? []).slice(0, 2)];
     if (terms.length === 0) return [];
 
+    // Stack Exchange's `q` implicitly ANDs every space-separated word — a
+    // multi-word phrase (let alone several concatenated ICP phrases)
+    // requires all of those words to co-occur and reliably returns zero
+    // results (verified against the live API: a 4-word ICP phrase returned
+    // 0 items on a tag that had 25; every individual word from that same
+    // phrase returned results). A single significant word reliably
+    // matches. Reuses the same word-extraction already trusted for tag
+    // discovery above, capped to 1 word instead of 5 — one search term,
+    // not a sentence.
+    const [searchWord] = extractTagCandidates(terms, 1);
+    if (!searchWord) return [];
+
     const result = await this.get<SEQuestion>("/search/advanced", {
       tagged: communityExternalId,
-      q: terms.join(" "),
+      q: searchWord,
       sort: "creation",
       order: "desc",
       filter: "withbody",

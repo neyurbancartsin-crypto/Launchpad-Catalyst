@@ -65,7 +65,7 @@ export function FeedbackMascot({
           type="button"
           onClick={open}
           aria-label="Give feedback"
-          className="flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground shadow-lg transition-transform duration-150 hover:scale-105 focus-visible:scale-105"
+          className="feedback-animate-attention flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground shadow-lg transition-transform duration-150 hover:scale-105 focus-visible:scale-105"
         >
           <MascotFace />
         </button>

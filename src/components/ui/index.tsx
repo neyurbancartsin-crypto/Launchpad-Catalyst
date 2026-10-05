@@ -80,7 +80,10 @@ type BadgeTone =
   | "success"
   | "warning"
   | "danger"
-  | "demo";
+  | "demo"
+  | "source-github"
+  | "source-hackernews"
+  | "source-stackoverflow";
 
 const BADGE_TONES: Record<BadgeTone, string> = {
   neutral: "border-border bg-surface-muted text-muted",
@@ -93,6 +96,14 @@ const BADGE_TONES: Record<BadgeTone, string> = {
   warning: "border-warning-border bg-warning-soft text-warning",
   danger: "border-danger-border bg-danger-soft text-danger",
   demo: "border-demo-border bg-demo-soft text-demo",
+  // Conversation-source identity — muted, distinct per platform (see
+  // PlatformBadge in opportunity-bits.tsx), not the platforms' own bright
+  // brand colors.
+  "source-github": "border-source-github-border bg-source-github-soft text-source-github",
+  "source-hackernews":
+    "border-source-hackernews-border bg-source-hackernews-soft text-source-hackernews",
+  "source-stackoverflow":
+    "border-source-stackoverflow-border bg-source-stackoverflow-soft text-source-stackoverflow",
 };
 
 export function Badge({

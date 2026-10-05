@@ -107,8 +107,24 @@ export function RiskBadge({ risk }: { risk: PromotionRisk }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
+/**
+ * A distinct, muted accent per discovery source so a founder scanning a
+ * mixed-source list can tell GitHub/Hacker News/Stack Overflow apart at a
+ * glance (PRD: conversation source styling). Deferred platforms (Reddit, X,
+ * LinkedIn) have no live discovery yet — they fall back to the plain neutral
+ * tone rather than inventing an accent for a source nothing currently finds.
+ */
+const SOURCE_TONE: Record<Platform, "source-github" | "source-hackernews" | "source-stackoverflow" | "neutral"> = {
+  GITHUB: "source-github",
+  HACKERNEWS: "source-hackernews",
+  STACKOVERFLOW: "source-stackoverflow",
+  REDDIT: "neutral",
+  X: "neutral",
+  LINKEDIN: "neutral",
+};
+
 export function PlatformBadge({ platform }: { platform: Platform }) {
-  return <Badge>{PLATFORM_LABELS[platform]}</Badge>;
+  return <Badge tone={SOURCE_TONE[platform]}>{PLATFORM_LABELS[platform]}</Badge>;
 }
 
 export function relativeTime(date: Date): string {

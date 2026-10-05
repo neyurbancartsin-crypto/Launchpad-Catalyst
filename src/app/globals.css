@@ -72,6 +72,24 @@
   --demo-border: #f0d79a;
 
   /* -------------------------------------------------------------------
+   * Conversation-source identity — a distinct, muted accent per discovery
+   * platform so a founder scanning a list of mixed-source opportunities can
+   * tell GitHub/Hacker News/Stack Overflow apart at a glance. Same
+   * solid/soft/border triad as success/warning/danger/demo above, kept
+   * equally muted (not the platforms' own bright brand colors) so they read
+   * as calm identity accents, not alerts.
+   * ------------------------------------------------------------------- */
+  --source-github: #3730a3;
+  --source-github-soft: #eef2ff;
+  --source-github-border: #c7d2fe;
+  --source-hackernews: #b8460e;
+  --source-hackernews-soft: #fdede3;
+  --source-hackernews-border: #f3cba8;
+  --source-stackoverflow: #0a5f9e;
+  --source-stackoverflow-soft: #e8f3fb;
+  --source-stackoverflow-border: #bcdcf2;
+
+  /* -------------------------------------------------------------------
    * Landing-page-specific aliases. Kept as their own names (`--landing-*`)
    * because the landing page needs an always-dark-or-light-section model
    * the authenticated product doesn't, but every value below is the exact
@@ -126,6 +144,15 @@
   --color-demo: var(--demo);
   --color-demo-soft: var(--demo-soft);
   --color-demo-border: var(--demo-border);
+  --color-source-github: var(--source-github);
+  --color-source-github-soft: var(--source-github-soft);
+  --color-source-github-border: var(--source-github-border);
+  --color-source-hackernews: var(--source-hackernews);
+  --color-source-hackernews-soft: var(--source-hackernews-soft);
+  --color-source-hackernews-border: var(--source-hackernews-border);
+  --color-source-stackoverflow: var(--source-stackoverflow);
+  --color-source-stackoverflow-soft: var(--source-stackoverflow-soft);
+  --color-source-stackoverflow-border: var(--source-stackoverflow-border);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
@@ -329,6 +356,31 @@ body {
   animation: landing-core-glow 6s ease-in-out infinite;
 }
 
+/* A slow, gentle breathing scale + soft lime glow — not a bounce or shake —
+   so the feedback button stays noticeable without reading as an alert.
+   Long duration (5s) and a mostly-still rest state keep it calm rather than
+   distracting in a corner of the screen someone looks at for hours. */
+@keyframes feedback-attention {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(184, 255, 0, 0);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 8px rgba(184, 255, 0, 0.12);
+  }
+}
+
+.feedback-animate-attention {
+  animation: feedback-attention 5s ease-in-out infinite;
+}
+
+.feedback-animate-attention:hover,
+.feedback-animate-attention:focus-visible {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-animate-float,
   .landing-animate-bob,
@@ -338,7 +390,8 @@ body {
   .landing-animate-orbit,
   .landing-animate-orbit-reverse,
   .landing-animate-signal,
-  .landing-animate-core-glow {
+  .landing-animate-core-glow,
+  .feedback-animate-attention {
     animation: none;
   }
 }
