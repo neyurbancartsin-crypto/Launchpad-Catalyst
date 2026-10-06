@@ -5,13 +5,14 @@ import type { CommunityDTO, PlatformAdapter, PostDTO } from "@/lib/adapters/type
 /**
  * End-to-end proof that a real cron-triggered request runs the actual
  * pipeline — route -> runDiscoverySync -> syncOpportunities -> adapter —
- * spending AI only on what's actually needed: exactly one
- * `generateDiscoveryQueries` call for this cycle's search angles, and the
- * deterministic `scoreOpportunity` path. Conversation analysis and response
- * generation are explicit, user-triggered actions elsewhere and must never
- * run automatically here. Unlike route.test.ts, `runDiscoverySync`/
- * `syncOpportunities` are NOT mocked here; only the platform adapter, the AI
- * provider registry, and Prisma are.
+ * spending AI only on what's actually needed: the deterministic
+ * `scoreOpportunity` path. This cycle's search-angle generation is fully
+ * deterministic (no AI provider call at all — see
+ * `generateDeterministicDiscoveryQueries`). Conversation analysis and
+ * response generation are explicit, user-triggered actions elsewhere and
+ * must never run automatically here. Unlike route.test.ts,
+ * `runDiscoverySync`/`syncOpportunities` are NOT mocked here; only the
+ * platform adapter, the AI provider registry, and Prisma are.
  */
 
 const { mockGetAdapter, mockGetAIProvider, prismaMocks } = vi.hoisted(() => ({
@@ -109,6 +110,9 @@ const project = {
   lastAutoDiscoveryAt: null,
   competitors: "none",
   icp: {
+    productSummary: "An invoicing tool for freelancers.",
+    coreProblem: "Clients pay late.",
+    primaryCustomer: "freelancers",
     searchTopics: ["overdue invoice"],
     roles: [],
     problemMap: [],
@@ -116,6 +120,7 @@ const project = {
     intentSignals: [],
     buyingTriggers: [],
     positiveKeywords: [],
+    supportedUseCases: [],
     keywordSynonyms: [],
     negativeKeywords: [],
     productCategory: "Invoicing",
@@ -197,7 +202,7 @@ afterEach(() => {
 });
 
 describe("POST /api/cron/discovery - end-to-end, minimal AI calls", () => {
-  it("discovers and persists a real opportunity through the full pipeline, calling AI only for query generation and deterministic scoring", async () => {
+  it("discovers and persists a real opportunity through the full pipeline, calling AI only for deterministic scoring", async () => {
     const response = await POST(fakeRequest({ authorization: "Bearer test-secret" }));
     const body = await response.json();
 
@@ -207,13 +212,13 @@ describe("POST /api/cron/discovery - end-to-end, minimal AI calls", () => {
     // The opportunity was actually persisted (deterministic scoring ran).
     expect(prismaMocks.opportunityUpsert).toHaveBeenCalledTimes(1);
 
-    // The AI provider is used for exactly two things in an automatic cycle:
-    // one query-generation call for this cycle's search angles, and
-    // deterministic scoreOpportunity per new/changed post — never
-    // conversation analysis or response generation, which stay explicit,
-    // user-triggered actions elsewhere.
+    // The AI provider is used for exactly one thing in an automatic cycle:
+    // deterministic scoreOpportunity per new/changed post. Search-angle
+    // generation for this cycle is fully deterministic and never calls the
+    // AI provider at all — nor do conversation analysis or response
+    // generation, which stay explicit, user-triggered actions elsewhere.
     const ai = mockGetAIProvider.mock.results[0].value;
-    expect(ai.generateDiscoveryQueries).toHaveBeenCalledTimes(1);
+    expect(ai.generateDiscoveryQueries).not.toHaveBeenCalled();
     expect(ai.scoreOpportunity).toHaveBeenCalledTimes(1);
     expect(ai.analyzeConversation).not.toHaveBeenCalled();
     expect(ai.generateResponse).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 import type { ICP, SaaSProject } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getAIProvider } from "@/lib/ai/registry";
+import { generateDeterministicDiscoveryQueries } from "./deterministic-discovery-queries";
 import type { ProblemMapEntry } from "@/lib/ai/types";
 
 /**
@@ -13,32 +13,34 @@ import type { ProblemMapEntry } from "@/lib/ai/types";
 const RECENT_RUNS_CONSIDERED = 3;
 
 /**
- * One AI call per discovery cycle, reusing the already-stored ICP rather
- * than regenerating the business understanding, producing a fresh batch of
- * search-angle phrases for THIS cycle's retrieval only (never scoring — see
- * discovery.ts). Call sites: `runDiscoverySync`, shared by onboarding,
- * "Find New Opportunities", and the cron.
+ * Builds this cycle's fresh batch of search-angle phrases from the ICP's
+ * own stored business context plus recent discovery history — reusing the
+ * already-stored ICP rather than regenerating the business understanding,
+ * for THIS cycle's retrieval only (never scoring — see discovery.ts). Call
+ * sites: `runDiscoverySync`, shared by onboarding, "Find New Opportunities",
+ * and the cron.
  *
- * Never throws: a transient AI failure must not block discovery entirely —
- * callers get back an empty array and `syncOpportunities` falls back to its
- * existing deterministic query strategy exactly as it did before this
- * feature existed.
+ * Fully deterministic — no AI provider, no network call, cannot be
+ * rate-limited or go down, so Gemini/Claude/OpenRouter availability never
+ * affects discovery. Never throws: an unexpected data shape must not block
+ * discovery entirely — callers get back an empty array and
+ * `syncOpportunities` falls back to its existing deterministic query
+ * strategy exactly as it did before this feature existed.
  */
 export async function generateFreshQueries(
   project: SaaSProject,
   icp: ICP,
 ): Promise<string[]> {
-  const recentRuns = await prisma.discoveryRun.findMany({
-    where: { projectId: project.id },
-    orderBy: { runAt: "desc" },
-    take: RECENT_RUNS_CONSIDERED,
-    select: { queriesUsed: true },
-  });
-  const recentQueries = [...new Set(recentRuns.flatMap((run) => run.queriesUsed))];
-
-  const ai = getAIProvider();
   try {
-    const result = await ai.generateDiscoveryQueries({
+    const recentRuns = await prisma.discoveryRun.findMany({
+      where: { projectId: project.id },
+      orderBy: { runAt: "desc" },
+      take: RECENT_RUNS_CONSIDERED,
+      select: { queriesUsed: true },
+    });
+    const recentQueries = [...new Set(recentRuns.flatMap((run) => run.queriesUsed))];
+
+    const result = generateDeterministicDiscoveryQueries({
       productSummary: icp.productSummary,
       coreProblem: icp.coreProblem,
       primaryCustomer: icp.primaryCustomer,

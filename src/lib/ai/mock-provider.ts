@@ -19,6 +19,7 @@ import {
   selectArchetype,
   type Archetype,
 } from "./archetypes";
+import { generateDeterministicDiscoveryQueries } from "@/lib/search/deterministic-discovery-queries";
 import type {
   AIProvider,
   ChannelRecommendation,
@@ -128,50 +129,6 @@ function deriveKeywordSynonyms(positiveKeywords: string[]): KeywordSynonymEntry[
  * it only ever offers generic noise exclusions rather than guessing.
  */
 const GENERIC_NEGATIVE_KEYWORDS = ["hiring", "job opening", "giveaway"];
-
-// --- Discovery query generation (demo engine) -------------------------------
-
-const MAX_MOCK_DISCOVERY_QUERIES = 12;
-
-/**
- * Generic angle shapes the demo engine can apply to any existing ICP phrase
- * — the same honesty as GENERIC_SYNONYMS above: a real AI provider writes
- * genuinely new customer language from scratch, but the demo engine has no
- * language model, so it can only recombine phrases already stored on the
- * ICP into differently-shaped questions. Order matters — see the rotation
- * in `generateDiscoveryQueries` below.
- */
-const QUERY_ANGLE_TEMPLATES: ((phrase: string) => string)[] = [
-  (p) => p,
-  (p) => `how do i deal with ${p}`,
-  (p) => `is there a tool for ${p}`,
-  (p) => `${p} alternative`,
-  (p) => `struggling with ${p}`,
-  (p) => `anyone else dealing with ${p}`,
-  (p) => `workaround for ${p}`,
-  (p) => `recommendations for ${p}`,
-];
-
-/** Every distinct phrase already stored on the ICP that could seed a search query. */
-function discoveryQueryPool(input: DiscoveryQueryGenerationInput): string[] {
-  const phrases = [
-    ...input.positiveKeywords,
-    ...input.painPoints,
-    ...input.problemMap.map((entry) => entry.problem),
-    ...input.supportedUseCases,
-    ...input.searchTopics,
-  ];
-  const seen = new Set<string>();
-  const pool: string[] = [];
-  for (const phrase of phrases) {
-    const trimmed = phrase.trim();
-    const key = trimmed.toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    pool.push(trimmed);
-  }
-  return pool;
-}
 
 /**
  * Splits the founder's own "main use cases" answer into individual phrases —
@@ -391,48 +348,15 @@ export class MockAIProvider implements AIProvider {
   }
 
   /**
-   * Deterministic stand-in for a real per-cycle query-generation call: no
-   * randomness, so repeated-discovery tests can assert on it directly (see
-   * Test 5). Diversity comes from two things, both derived only from the
-   * inputs already given: which angle template leads the batch rotates with
-   * how many queries have already been used (`recentQueries.length`), and
-   * any candidate already present in `recentQueries` is skipped. A real
-   * provider can write genuinely new phrasing; this can only recombine the
-   * ICP's own stored vocabulary — still enough to avoid literally repeating
-   * the same batch cycle after cycle.
+   * Delegates to the same deterministic generator the real discovery
+   * pipeline now uses directly (see `generateDeterministicDiscoveryQueries`)
+   * — kept here so this provider's own `generateDiscoveryQueries` behavior
+   * (and its tests) stay identical to before that extraction.
    */
   async generateDiscoveryQueries(
     input: DiscoveryQueryGenerationInput,
   ): Promise<DiscoveryQueryGenerationResult> {
-    const pool = discoveryQueryPool(input);
-    if (pool.length === 0) return { queries: [] };
-
-    const usedBefore = new Set(input.recentQueries.map((q) => q.trim().toLowerCase()));
-    const rotation = input.recentQueries.length % QUERY_ANGLE_TEMPLATES.length;
-    const orderedTemplates = [
-      ...QUERY_ANGLE_TEMPLATES.slice(rotation),
-      ...QUERY_ANGLE_TEMPLATES.slice(0, rotation),
-    ];
-
-    const seen = new Set<string>();
-    const queries: string[] = [];
-    outer: for (const template of orderedTemplates) {
-      for (const phrase of pool) {
-        if (queries.length >= MAX_MOCK_DISCOVERY_QUERIES) break outer;
-        const candidate = template(phrase.toLowerCase());
-        const key = candidate.toLowerCase();
-        if (usedBefore.has(key) || seen.has(key)) continue;
-        seen.add(key);
-        queries.push(candidate);
-      }
-    }
-
-    // Filtering against recent history can exhaust a small ICP's pool after
-    // enough cycles — fall back to the base phrases rather than returning
-    // nothing; a query repeating across cycles is acceptable (PRD note:
-    // diversity is best-effort), an empty batch breaking discovery is not.
-    if (queries.length === 0) return { queries: pool.slice(0, MAX_MOCK_DISCOVERY_QUERIES) };
-    return { queries };
+    return generateDeterministicDiscoveryQueries(input);
   }
 
   async analyzeConversation(
