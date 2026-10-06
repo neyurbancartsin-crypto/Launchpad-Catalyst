@@ -12,8 +12,9 @@ import {
   setActiveProjectCookie,
 } from "@/lib/project";
 import { getAIProvider } from "@/lib/ai/registry";
+import { generateDeterministicSaaSAnalysis } from "@/lib/ai/deterministic-saas-analysis";
 import { manualDiscoveryAvailableAt, runDiscoverySync } from "@/lib/discovery-run";
-import type { SaaSIntake } from "@/lib/ai/types";
+import type { SaaSAnalysisWithChannels, SaaSIntake } from "@/lib/ai/types";
 
 export interface FormState {
   error?: string;
@@ -66,20 +67,29 @@ export async function completeOnboardingAction(
     useCases,
   };
 
-  const ai = getAIProvider();
-  let analysis: Awaited<ReturnType<typeof ai.analyzeSaaSWithChannels>>["analysis"];
-  let channels: Awaited<ReturnType<typeof ai.analyzeSaaSWithChannels>>["channels"];
+  let analysis: SaaSAnalysisWithChannels["analysis"];
+  let channels: SaaSAnalysisWithChannels["channels"];
+  // Onboarding must never block on the configured AI provider being
+  // rate-limited, down, misconfigured, or simply unset (a missing API key
+  // throws inside `getAIProvider()` itself, before `analyzeSaaSWithChannels`
+  // is even reached — hence this try also wraps that call, not just the
+  // next one). Any failure here falls back to the same deterministic
+  // analysis the demo engine already uses (`MockAIProvider` delegates to the
+  // same function), built entirely from the founder's own intake — no
+  // retry, no extra AI call, just a graceful downgrade so onboarding
+  // completes either way.
+  let usedDeterministicFallback = false;
   try {
+    const ai = getAIProvider();
     ({ analysis, channels } = await ai.analyzeSaaSWithChannels(intake));
   } catch (error) {
-    // Surface a specific, actionable message on the form instead of letting
-    // this throw past the action into the generic dashboard error boundary.
-    return {
-      error:
-        error instanceof Error
-          ? `Could not analyze your product: ${error.message}`
-          : "Could not analyze your product. Try again.",
-    };
+    console.warn(
+      `[onboarding] AI product analysis unavailable, falling back to deterministic analysis: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    usedDeterministicFallback = true;
+    ({ analysis, channels } = generateDeterministicSaaSAnalysis(intake));
   }
 
   // A `mode=new` hidden field (set by the onboarding wizard when reached via
@@ -192,7 +202,9 @@ export async function completeOnboardingAction(
   await runDiscoverySync(project, icp, { isAuto: false });
 
   revalidatePath("/", "layout");
-  redirect("/strategy?onboarded=1");
+  redirect(
+    usedDeterministicFallback ? "/strategy?onboarded=1&aiFallback=1" : "/strategy?onboarded=1",
+  );
 }
 
 // --- ICP editing (PRD s6: the founder must be able to edit the analysis) ----

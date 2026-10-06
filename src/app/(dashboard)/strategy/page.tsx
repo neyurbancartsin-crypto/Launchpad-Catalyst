@@ -9,7 +9,12 @@ import { DemoBadge } from "@/components/ui/demo-badge";
 
 export const metadata = { title: "Strategy · Launchpad Catalyst" };
 
-export default async function StrategyPage() {
+export default async function StrategyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ aiFallback?: string }>;
+}) {
+  const { aiFallback } = await searchParams;
   const { project, icp } = await requireProjectWithIcp();
   const channels = await prisma.channel.findMany({
     where: { projectId: project.id },
@@ -26,6 +31,13 @@ export default async function StrategyPage() {
       />
 
       <div className="space-y-6">
+        {aiFallback === "1" ? (
+          <div className="rounded-xl border border-warning-border bg-warning-soft px-4 py-3 text-sm text-warning">
+            AI analysis is temporarily unavailable. Catalyst continued using your product
+            information.
+          </div>
+        ) : null}
+
         <Card>
           <CardHeader title="Product understanding" />
           <dl className="space-y-3 text-sm">

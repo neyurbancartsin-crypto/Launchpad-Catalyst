@@ -124,18 +124,123 @@ beforeEach(() => {
   mockManualDiscoveryAvailableAt.mockReturnValue(null);
 });
 
-describe("completeOnboardingAction - onboarding AI failure path", () => {
-  it("returns a form error instead of throwing when analyzeSaaSWithChannels fails", async () => {
+describe("completeOnboardingAction - AI-unavailable fallback", () => {
+  // 1. Gemini (or whichever provider) succeeds: the existing AI-provided
+  // result is used untouched, no fallback, no extra query param.
+  it("uses the AI-provided analysis, not the deterministic fallback, when the AI call succeeds", async () => {
+    const analyzeSaaSWithChannels = vi
+      .fn()
+      .mockResolvedValue({ analysis: fakeAnalysis, channels: [] });
+    mockGetAIProvider.mockReturnValue({ analyzeSaaSWithChannels });
+
+    await completeOnboardingAction({}, formData(validIntake));
+
+    expect(prismaMocks.icpUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ productSummary: "summary" }) }),
+    );
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1");
+  });
+
+  // 2. 429 rate limit -> deterministic fallback, onboarding still completes.
+  it("falls back to deterministic analysis on a Gemini 429 rate-limit error, and onboarding still completes", async () => {
     mockGetAIProvider.mockReturnValue({
-      analyzeSaaSWithChannels: vi.fn().mockRejectedValue(new Error("schema mismatch")),
+      analyzeSaaSWithChannels: vi
+        .fn()
+        .mockRejectedValue(new Error("Gemini rate limit reached. The free tier has a limited requests-per-minute/day quota — try again shortly.")),
     });
 
-    const result = await completeOnboardingAction({}, formData(validIntake));
+    await completeOnboardingAction({}, formData(validIntake));
 
-    expect(result.error).toContain("schema mismatch");
-    expect(mockRedirect).not.toHaveBeenCalled();
-    expect(prismaMocks.saaSProjectCreate).not.toHaveBeenCalled();
-    expect(mockRunDiscoverySync).not.toHaveBeenCalled();
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1&aiFallback=1");
+    expect(prismaMocks.saaSProjectCreate).toHaveBeenCalledTimes(1);
+    expect(mockRunDiscoverySync).toHaveBeenCalledTimes(1);
+  });
+
+  // 3. 503 / service unavailable -> deterministic fallback.
+  it("falls back to deterministic analysis on a Gemini 503/transient error", async () => {
+    mockGetAIProvider.mockReturnValue({
+      analyzeSaaSWithChannels: vi.fn().mockRejectedValue(new Error("Gemini returned 503")),
+    });
+
+    await completeOnboardingAction({}, formData(validIntake));
+
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1&aiFallback=1");
+  });
+
+  // 3b. 5xx failure after retries exhausted -> same fallback path (the
+  // provider's own retry/backoff already ran before this throw reaches us).
+  it("falls back to deterministic analysis after a provider's retries are exhausted", async () => {
+    mockGetAIProvider.mockReturnValue({
+      analyzeSaaSWithChannels: vi
+        .fn()
+        .mockRejectedValue(new Error("Gemini request failed after 5 attempts")),
+    });
+
+    await completeOnboardingAction({}, formData(validIntake));
+
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1&aiFallback=1");
+  });
+
+  // 4. Network failure / timeout -> deterministic fallback.
+  it("falls back to deterministic analysis on a network failure or timeout", async () => {
+    mockGetAIProvider.mockReturnValue({
+      analyzeSaaSWithChannels: vi.fn().mockRejectedValue(new Error("fetch failed: ETIMEDOUT")),
+    });
+
+    await completeOnboardingAction({}, formData(validIntake));
+
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1&aiFallback=1");
+  });
+
+  // 5. Missing GEMINI_API_KEY throws inside getAIProvider() itself, before
+  // analyzeSaaSWithChannels is ever reached — must still be caught and
+  // fall back, not escape to the dashboard error boundary.
+  it("falls back to deterministic analysis when getAIProvider() itself throws (e.g. missing API key)", async () => {
+    mockGetAIProvider.mockImplementation(() => {
+      throw new Error("GEMINI_API_KEY is not set. Set AI_PROVIDER=mock to use the demo engine instead.");
+    });
+
+    await completeOnboardingAction({}, formData(validIntake));
+
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1&aiFallback=1");
+    expect(prismaMocks.saaSProjectCreate).toHaveBeenCalledTimes(1);
+  });
+
+  // 6. The deterministic fallback produces a complete, usable
+  // SaaSAnalysisWithChannels shape — every field the ICP/Channel upserts
+  // and the subsequent discovery run actually read is populated.
+  it("the deterministic fallback produces valid ICP and Channel data from the founder's own intake", async () => {
+    mockGetAIProvider.mockReturnValue({
+      analyzeSaaSWithChannels: vi.fn().mockRejectedValue(new Error("Gemini rate limit reached")),
+    });
+
+    await completeOnboardingAction(
+      {},
+      formData({
+        ...validIntake,
+        description: "A tool that automates repetitive support tickets for small teams.",
+        problemSolved: "Support teams answer the same handful of questions over and over.",
+      }),
+    );
+
+    const icpCreate = prismaMocks.icpUpsert.mock.calls[0][0].create;
+    expect(typeof icpCreate.productSummary).toBe("string");
+    expect(icpCreate.productSummary.length).toBeGreaterThan(0);
+    expect(Array.isArray(icpCreate.painPoints)).toBe(true);
+    expect(Array.isArray(icpCreate.searchTopics)).toBe(true);
+    expect(Array.isArray(icpCreate.positiveKeywords)).toBe(true);
+    expect(Array.isArray(icpCreate.supportedUseCases)).toBe(true);
+    expect(Array.isArray(icpCreate.unsupportedUseCases)).toBe(true);
+
+    // At least one Channel row was upserted with a well-formed recommendation.
+    expect(prismaMocks.channelUpsert).toHaveBeenCalled();
+    const channelCreate = prismaMocks.channelUpsert.mock.calls[0][0].create;
+    expect(typeof channelCreate.fitScore).toBe("number");
+    expect(typeof channelCreate.whyItFits).toBe("string");
+
+    // 7. Onboarding completed successfully end-to-end on the fallback path.
+    expect(mockRunDiscoverySync).toHaveBeenCalledTimes(1);
+    expect(mockRedirect).toHaveBeenCalledWith("/strategy?onboarded=1&aiFallback=1");
   });
 
   it("calls analyzeSaaSWithChannels exactly once on a normal onboarding submission", async () => {
